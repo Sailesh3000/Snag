@@ -25,6 +25,33 @@ flowchart LR
 
 ---
 
+## How It Works
+
+```mermaid
+flowchart LR
+    A[Page Loads] --> B[Extract Fields]
+    B --> C[Classify]
+    C --> D[User Clicks Question]
+    D --> E[Generate Answer]
+    E --> F[Approve & Fill]
+
+    style A fill:#1e293b,color:#fff
+    style B fill:#1e293b,color:#fff
+    style C fill:#1e293b,color:#fff
+    style D fill:#6366f1,color:#fff
+    style E fill:#f59e0b,color:#fff
+    style F fill:#10b981,color:#fff
+```
+
+1. **Page Loads** — Content script scans the DOM for form fields
+2. **Extract Fields** — Labels, placeholders, types, and context are captured
+3. **Classify** — Backend categorizes each field (name, email, question, etc.)
+4. **User Clicks Question** — Click any open-ended question in the sidebar
+5. **Generate Answer** — LLM generates a tailored draft using your profile + past answers
+6. **Approve & Fill** — Click "Approve" to auto-fill the field
+
+---
+
 ## Project Structure
 
 ```
