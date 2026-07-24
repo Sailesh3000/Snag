@@ -1,0 +1,11 @@
+node_modules/
+ui/node_modules/
+extension/node_modules/
+ui/build/
+extension/sidebar/
+__pycache__/
+*.pyc
+data/
+.git
+.env
+*.db

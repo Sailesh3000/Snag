@@ -1,0 +1,13 @@
+{
+  "name": "applypilot-extension",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc && cp src/content/styles.css content/styles.css",
+    "watch": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/chrome": "^0.0.280"
+  }
+}
