@@ -48,7 +48,7 @@ export function useWebSocket(): UseWebSocketReturn {
     if (!backendUrl) return;
 
     function handleParentMessage(event: MessageEvent) {
-      if (event.data?.source === "applypilot" && event.data?.msg) {
+      if (event.data?.source === "snag" && event.data?.msg) {
         const msg = event.data.msg as WebSocketMessage;
         setLastMessage(msg);
         setMessages((prev) => [...prev, msg]);
@@ -107,7 +107,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const send = useCallback((msg: object) => {
     if (isInIframe) {
       window.parent.postMessage(
-        { source: "applypilot", type: (msg as Record<string, unknown>).type, payload: (msg as Record<string, unknown>).payload },
+        { source: "snag", type: (msg as Record<string, unknown>).type, payload: (msg as Record<string, unknown>).payload },
         "*"
       );
       return;

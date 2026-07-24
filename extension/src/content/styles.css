@@ -1,11 +1,11 @@
-#applypilot-sidebar {
+#snag-sidebar {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-#applypilot-sidebar iframe {
+#snag-sidebar iframe {
   color-scheme: dark;
 }
 
-#applypilot-toggle:hover {
+#snag-toggle:hover {
   background: #4f46e5 !important;
 }

@@ -1,4 +1,4 @@
-# ApplyPilot — High-Level Specification
+# Snag — High-Level Specification
 
 ## 1. System Architecture
 
@@ -139,7 +139,7 @@ Learning Agent stores final answer + updates embeddings
 
 ## 3. Database Schema
 
-### SQLite (`applypilot.db`)
+### SQLite (`snag.db`)
 
 ```sql
 CREATE TABLE profile (

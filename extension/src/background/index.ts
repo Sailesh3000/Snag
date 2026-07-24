@@ -15,7 +15,7 @@ async function createSession(tabId: number): Promise<TabSession> {
   const ws = new WebSocket(`${baseUrl}/ws/${sessionId}`);
 
   ws.onopen = () => {
-    console.log(`[ApplyPilot] WS connected: ${sessionId}`);
+    console.log(`[Snag] WS connected: ${sessionId}`);
   };
 
   ws.onmessage = (event) => {
@@ -23,12 +23,12 @@ async function createSession(tabId: number): Promise<TabSession> {
       const msg = JSON.parse(event.data);
       chrome.tabs.sendMessage(tabId, msg).catch(() => {});
     } catch (e) {
-      console.error("[ApplyPilot] WS parse error:", e);
+      console.error("[Snag] WS parse error:", e);
     }
   };
 
   ws.onclose = () => {
-    console.log(`[ApplyPilot] WS disconnected: ${sessionId}`);
+    console.log(`[Snag] WS disconnected: ${sessionId}`);
     tabSessions.delete(tabId);
   };
 
@@ -90,7 +90,7 @@ chrome.action.onClicked.addListener(async (tab) => {
         files: ["content/styles.css"],
       });
     } catch (e) {
-      console.error("[ApplyPilot] Injection failed:", e);
+      console.error("[Snag] Injection failed:", e);
       return;
     }
     activeTabs.add(tab.id);

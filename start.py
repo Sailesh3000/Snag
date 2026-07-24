@@ -36,7 +36,7 @@ def main():
     run("npm run build", EXT)
 
     # 4. Start backend
-    print("\n>>> Starting ApplyPilot backend...\n")
+    print("\n>>> Starting Snag backend...\n")
     subprocess.run(
         [sys.executable, "-m", "backend.app"],
         cwd=ROOT,

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ApplyPilot",
+  "name": "Snag",
   "version": "0.2.0",
   "description": "AI-powered job application copilot. Bring your own API key.",
   "permissions": ["activeTab", "storage", "scripting"],
@@ -16,6 +16,6 @@
     }
   ],
   "action": {
-    "default_title": "ApplyPilot — Click to toggle sidebar"
+    "default_title": "Snag — Click to toggle sidebar"
   }
 }

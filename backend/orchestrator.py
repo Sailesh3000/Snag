@@ -15,7 +15,7 @@ from backend.agents import (
 logger = logging.getLogger(__name__)
 
 
-class ApplyPilotOrchestrator:
+class SnagOrchestrator:
     def __init__(self, llm_agent: Agent):
         self.llm_agent = llm_agent
         self._static_fill_graph: GraphBuilder | None = None
@@ -66,4 +66,4 @@ class ApplyPilotOrchestrator:
         return await self._graph.invoke_async(task)
 
 
-orchestrator = ApplyPilotOrchestrator(llm_agent=None)
+orchestrator = SnagOrchestrator(llm_agent=None)

@@ -260,10 +260,10 @@ function buildSelector(el: Element): string {
 
 
 function injectSidebar() {
-  if (document.getElementById("applypilot-sidebar")) return;
+  if (document.getElementById("snag-sidebar")) return;
 
   const container = document.createElement("div");
-  container.id = "applypilot-sidebar";
+  container.id = "snag-sidebar";
   container.style.cssText = `
     position: fixed; top: 0; right: 0; z-index: 2147483647;
     width: 380px; height: 100vh; border: none;
@@ -280,7 +280,7 @@ function injectSidebar() {
   sidebarIframe = iframe;
 
   const toggle = document.createElement("button");
-  toggle.id = "applypilot-toggle";
+  toggle.id = "snag-toggle";
   toggle.textContent = "AP";
   toggle.style.cssText = `
     position: fixed; right: 0; top: 50%; z-index: 2147483647;
@@ -396,7 +396,7 @@ function clearHighlights(): void {
 
 function forwardToSidebar(msg: unknown): void {
   if (sidebarIframe?.contentWindow) {
-    sidebarIframe.contentWindow.postMessage({ source: "applypilot", msg }, "*");
+    sidebarIframe.contentWindow.postMessage({ source: "snag", msg }, "*");
   }
 }
 
@@ -457,7 +457,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 window.addEventListener("message", (event) => {
-  if (event.data?.source === "applypilot" && event.data?.type) {
+  if (event.data?.source === "snag" && event.data?.type) {
     chrome.runtime.sendMessage({ type: event.data.type, payload: event.data.payload });
   }
 });
@@ -534,7 +534,7 @@ function sendPageUpdate() {
   };
 
   console.log(
-    `%c [ApplyPilot] WS Payload`,
+    `%c [Snag] WS Payload`,
     "color:green;background:black;padding:2px;border-radius:3px;",
     JSON.stringify(capture({ url: window.location.href, fields, jobTitle, company }), null, 2),
   );
@@ -561,10 +561,10 @@ function cleanup() {
   }
 
   if (isTopFrame) {
-    const toggle = document.getElementById("applypilot-toggle");
+    const toggle = document.getElementById("snag-toggle");
     if (toggle) toggle.remove();
 
-    const sidebar = document.getElementById("applypilot-sidebar");
+    const sidebar = document.getElementById("snag-sidebar");
     if (sidebar) sidebar.remove();
 
     sidebarIframe = null;

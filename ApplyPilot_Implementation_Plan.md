@@ -1,8 +1,8 @@
-# ApplyPilot --- Implementation Plan
+# Snag --- Implementation Plan
 
 ## Overview
 
-ApplyPilot is a local AI-powered job application copilot that activates
+Snag is a local AI-powered job application copilot that activates
 only on supported job application websites. It intelligently understands
 application forms, retrieves user profile information, generates
 tailored responses for open-ended questions, requests user approval
@@ -77,7 +77,7 @@ Strands Orchestrator
 # Project Structure
 
 ``` text
-apply-pilot/
+snag/
 ├── backend/
 │   ├── agents/
 │   ├── tools/

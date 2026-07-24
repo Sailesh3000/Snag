@@ -23,7 +23,7 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
     if (!message.trim()) return;
     setSending(true);
     try {
-      await fetch("https://api.applypilot.io/feedback", {
+      await fetch("https://api.snag.io/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, message: message.trim(), email: email.trim() || undefined, source: "extension", version: "0.2.0" }),
@@ -81,7 +81,7 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
                   </svg>
                 </div>
                 <p className="text-[13px] text-white font-medium">Thanks for your feedback!</p>
-                <p className="text-[11px] text-gray-500 mt-1">It helps us improve ApplyPilot.</p>
+                <p className="text-[11px] text-gray-500 mt-1">It helps us improve Snag.</p>
                 <button onClick={onClose} className="mt-4 px-4 py-1.5 bg-accent/20 rounded-lg text-accent text-[11px] font-semibold hover:bg-accent/30 transition-colors">
                   Close
                 </button>

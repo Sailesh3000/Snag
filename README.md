@@ -1,4 +1,4 @@
-# ApplyPilot
+# Snag
 
 AI-powered job application copilot. Bring your own API key — supports Ollama (local/free), OpenAI, Anthropic, Groq, or any OpenAI-compatible provider.
 
@@ -55,7 +55,7 @@ flowchart LR
 ## Project Structure
 
 ```
-ApplyPilot/
+Snag/
 ├── backend/
 │   ├── app.py                  # FastAPI entry point
 │   ├── config.py               # Pydantic settings
@@ -142,11 +142,11 @@ This will:
 1. Open `chrome://extensions`
 2. Enable "Developer mode"
 3. Click "Load unpacked" → select the `extension/` folder
-4. Click the ApplyPilot icon on any page to toggle the sidebar
+4. Click the Snag icon on any page to toggle the sidebar
 
 ### Configure Your LLM Provider
 
-1. Right-click the ApplyPilot icon → "Options"
+1. Right-click the Snag icon → "Options"
 2. Select your provider:
    - **Ollama** (local, free) — requires Ollama running with a model pulled
    - **OpenAI** — requires API key from platform.openai.com

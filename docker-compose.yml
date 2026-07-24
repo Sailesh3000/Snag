@@ -6,10 +6,10 @@ services:
     ports:
       - "8765:8765"
     environment:
-      - APPLYPILOT_HOST=0.0.0.0
-      - APPLYPILOT_PORT=8765
-      - APPLYPILOT_LOG_LEVEL=INFO
-      - APPLYPILOT_CORS_ORIGINS=["*"]
+      - SNAG_HOST=0.0.0.0
+      - SNAG_PORT=8765
+      - SNAG_LOG_LEVEL=INFO
+      - SNAG_CORS_ORIGINS=["*"]
     volumes:
       - backend-data:/app/data
     restart: unless-stopped

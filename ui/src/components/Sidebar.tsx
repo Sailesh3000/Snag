@@ -214,7 +214,7 @@ export default function Sidebar() {
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-surface" />
             </div>
             <div>
-              <h1 className="text-[13px] font-bold text-white tracking-tight">ApplyPilot</h1>
+              <h1 className="text-[13px] font-bold text-white tracking-tight">Snag</h1>
               <p className="text-[9px] text-gray-500 font-medium">AI Job Copilot</p>
             </div>
           </div>
