@@ -137,7 +137,7 @@ export default function Sidebar() {
           setGenerateError("Request timed out. The model may be loading.");
         } else {
           setGenerateError("Cannot reach backend. Is it running?");
-          console.error("[AP] generate failed:", e);
+          console.error("[Snag] generate failed:", e);
         }
       } finally {
         setGenerating(false);
@@ -186,7 +186,7 @@ export default function Sidebar() {
           setGenerateError("Request timed out. The model may be loading.");
         } else {
           setGenerateError("Cannot reach backend. Is it running?");
-          console.error("[AP] regenerate failed:", e);
+          console.error("[Snag] regenerate failed:", e);
         }
       } finally {
         setGenerating(false);
@@ -218,7 +218,19 @@ export default function Sidebar() {
               <p className="text-[9px] text-gray-500 font-medium">AI Job Copilot</p>
             </div>
           </div>
-          <StatusBadge connected={connected} />
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => { try { chrome.runtime.openOptionsPage(); } catch {} }}
+              className="w-5 h-5 flex items-center justify-center rounded-md hover:bg-white/[0.06] text-gray-500 hover:text-gray-300 transition-colors"
+              title="Extension Settings"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+            <StatusBadge connected={connected} />
+          </div>
         </div>
         <div className="glow-line mt-3" />
       </header>

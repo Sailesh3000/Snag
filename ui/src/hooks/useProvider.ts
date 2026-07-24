@@ -20,14 +20,18 @@ export function useProvider(): ProviderSettings {
   useEffect(() => {
     function load() {
       if (typeof chrome !== "undefined" && chrome.storage) {
-        chrome.storage.sync.get("settings", (data) => {
-          const s = data?.settings;
+        chrome.storage.sync.get("settings", (data: Record<string, unknown>) => {
+          const s = data?.settings as Record<string, string> | undefined;
           if (s) {
+            const provider = s.provider || "ollama";
+            const baseUrl = provider === "ollama"
+              ? (s.ollamaUrl || "http://127.0.0.1:11434")
+              : (s.baseUrl || "");
             setSettings({
-              provider: s.provider || "ollama",
+              provider,
               apiKey: s.apiKey || "",
               model: s.model || "",
-              baseUrl: s.baseUrl || "",
+              baseUrl,
             });
           }
         });
@@ -49,11 +53,9 @@ export function useProvider(): ProviderSettings {
 
 export function getProviderHeaders(s: ProviderSettings): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (s.provider !== "ollama") {
-    headers["X-Provider"] = s.provider;
-    headers["X-API-Key"] = s.apiKey;
-    if (s.model) headers["X-Model"] = s.model;
-    if (s.baseUrl) headers["X-Base-URL"] = s.baseUrl;
-  }
+  headers["X-Provider"] = s.provider;
+  if (s.apiKey) headers["X-API-Key"] = s.apiKey;
+  if (s.model) headers["X-Model"] = s.model;
+  if (s.baseUrl) headers["X-Base-URL"] = s.baseUrl;
   return headers;
 }

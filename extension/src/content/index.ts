@@ -281,7 +281,7 @@ function injectSidebar() {
 
   const toggle = document.createElement("button");
   toggle.id = "snag-toggle";
-  toggle.textContent = "AP";
+  toggle.textContent = "SN";
   toggle.style.cssText = `
     position: fixed; right: 0; top: 50%; z-index: 2147483647;
     width: 32px; height: 32px; border-radius: 8px 0 0 8px;

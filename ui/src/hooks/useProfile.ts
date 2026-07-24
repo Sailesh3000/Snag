@@ -1,12 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 
+const DEFAULT_API_BASE = "http://127.0.0.1:8765/api";
+
 function getApiBase(): string {
-  try {
-    if (typeof chrome !== "undefined" && chrome.storage) {
-      return "";
-    }
-  } catch {}
-  return "http://127.0.0.1:8765/api";
+  return DEFAULT_API_BASE;
 }
 
 interface Profile {
@@ -27,11 +24,11 @@ export function useProfile(): UseProfileReturn {
 
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.sync.get("settings", (data) => {
-        const s = data?.settings;
-        if (s?.backendUrl) {
-          setApiBase(s.backendUrl.replace(/^ws/, "http").replace(/\/$/, "") + "/api");
-        }
+      chrome.storage.sync.get("settings", (data: Record<string, unknown>) => {
+        const s = data?.settings as Record<string, string> | undefined;
+        setApiBase(s?.backendUrl
+          ? s.backendUrl.replace(/^ws/, "http").replace(/\/$/, "") + "/api"
+          : DEFAULT_API_BASE);
       });
     }
   }, []);

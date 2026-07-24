@@ -10,6 +10,8 @@ services:
       - SNAG_PORT=8765
       - SNAG_LOG_LEVEL=INFO
       - SNAG_CORS_ORIGINS=["*"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - backend-data:/app/data
     restart: unless-stopped

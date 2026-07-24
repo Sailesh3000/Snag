@@ -220,12 +220,23 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                         })
 
             elif msg_type == "answer:generate":
+                provider = payload.get("provider", "ollama")
+                api_key = payload.get("apiKey", "")
+                model = payload.get("model", "")
+                base_url = payload.get("baseUrl", "")
+                ollama_url = payload.get("ollamaUrl", "")
+                if provider == "ollama" and ollama_url:
+                    base_url = ollama_url
                 result = await generate_answer(
                     question=payload.get("question", ""),
                     company=payload.get("company", "") or (session.company or ""),
                     role=payload.get("role", "") or (session.role or ""),
                     job_description=payload.get("jobDescription", ""),
                     session_id=session_id,
+                    provider=provider,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
                 )
                 await manager.send(session_id, {
                     "type": "answer:draft",

@@ -34,6 +34,11 @@ app.include_router(answer_router)
 app.include_router(ws_router)
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "version": settings.app_version}
+
+
 @app.on_event("startup")
 async def startup():
     from backend.memory.sqlite_store import sqlite_store

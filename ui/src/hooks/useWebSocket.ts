@@ -16,13 +16,15 @@ interface UseWebSocketReturn {
 
 const isInIframe = window.self !== window.top;
 
+const DEFAULT_BACKEND_URL = "ws://127.0.0.1:8765";
+
 function getBackendUrl(): string {
   try {
     if (typeof chrome !== "undefined" && chrome.storage) {
-      return "";
+      return DEFAULT_BACKEND_URL;
     }
   } catch {}
-  return "ws://127.0.0.1:8765";
+  return DEFAULT_BACKEND_URL;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -35,11 +37,9 @@ export function useWebSocket(): UseWebSocketReturn {
 
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.sync.get("settings", (data) => {
-        const s = data?.settings;
-        if (s?.backendUrl) {
-          setBackendUrl(s.backendUrl);
-        }
+      chrome.storage.sync.get("settings", (data: Record<string, unknown>) => {
+        const s = data?.settings as Record<string, string> | undefined;
+        setBackendUrl(s?.backendUrl || DEFAULT_BACKEND_URL);
       });
     }
   }, []);
