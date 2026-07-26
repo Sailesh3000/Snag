@@ -9,6 +9,10 @@
     "type": "module"
   },
   "options_page": "settings/index.html",
+  "options_ui": {
+    "page": "settings/index.html",
+    "open_in_tab": true
+  },
   "web_accessible_resources": [
     {
       "resources": ["sidebar/*", "icons/*"],

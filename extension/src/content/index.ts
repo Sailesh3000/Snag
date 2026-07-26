@@ -498,14 +498,20 @@ function sendPageUpdate() {
     }
   }
 
-  chrome.runtime.sendMessage({
-    type: "page:update",
-    payload: {
-      url: window.location.href,
-      fields,
-      jobTitle: jobTitle || null,
-      company: company || null,
-    },
+  chrome.storage.sync.get("settings", (data) => {
+    const s = data?.settings || {};
+    const finalJobTitle = jobTitle || s.defaultRole || null;
+    const finalCompany = company || s.defaultCompany || null;
+
+    chrome.runtime.sendMessage({
+      type: "page:update",
+      payload: {
+        url: window.location.href,
+        fields,
+        jobTitle: finalJobTitle,
+        company: finalCompany,
+      },
+    });
   });
 
   const capture = (obj: Record<string, unknown>, depth = 0) => {

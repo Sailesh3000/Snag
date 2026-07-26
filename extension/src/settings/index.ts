@@ -135,9 +135,10 @@ function resetDefaults() {
 }
 
 (window as any).toggleKeyVisibility = toggleKeyVisibility;
-(window as any).saveSettings = saveSettings;
-(window as any).resetDefaults = resetDefaults;
 
 sel("provider").addEventListener("change", updateProviderUI);
+document.getElementById("saveBtn")!.addEventListener("click", saveSettings);
+document.getElementById("resetBtn")!.addEventListener("click", resetDefaults);
+document.getElementById("toggleVis")!.addEventListener("click", toggleKeyVisibility);
 
 loadSettings();
