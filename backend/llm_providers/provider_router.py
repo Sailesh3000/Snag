@@ -17,7 +17,7 @@ class LLMProvider(ABC):
 
 
 class OllamaProvider(LLMProvider):
-    def __init__(self, base_url: str, model: str, timeout: int = 120, keep_alive: str = "10m"):
+    def __init__(self, base_url: str, model: str, timeout: float | None = None, keep_alive: str = "10m"):
         self.base_url = base_url
         self.model = model
         self.timeout = timeout
