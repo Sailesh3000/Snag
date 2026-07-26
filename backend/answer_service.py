@@ -1,7 +1,6 @@
 import json
 import logging
 
-from backend.llm_providers.provider_router import get_provider
 from backend.memory.memory_service import find_similar
 from backend.memory.sqlite_store import sqlite_store
 from backend.prompts.templates import ANSWER_SYSTEM, QUESTION_TEMPLATES
@@ -47,70 +46,46 @@ def build_prompt(question: str, profile: dict, memories: list[dict], job_descrip
     return prompt, qtype
 
 
-async def generate_answer(
+async def prepare_context(
     question: str,
     company: str = "",
     role: str = "",
     job_description: str = "",
     session_id: str = "",
-    provider: str = "ollama",
-    api_key: str = "",
-    model: str = "",
-    base_url: str = "",
 ) -> dict:
+    """Build prompt context for the extension to send to the LLM directly."""
     profile = sqlite_store.get_profile()
     memories = await find_similar(question, company, role, top_k=3)
 
     prompt, qtype = build_prompt(question, profile, memories, job_description, company, role)
 
-    llm = get_provider(provider=provider, api_key=api_key, model=model, base_url=base_url)
-
-    draft = ""
-    error = None
-    try:
-        draft = await llm.generate(system=ANSWER_SYSTEM, prompt=prompt)
-    except Exception as e:
-        error = f"Generation failed: {e}"
-        logger.error(f"LLM generation failed ({provider}): {e}")
-
-    if not draft and not error:
-        error = "The LLM returned an empty response. Try rephrasing or check your API key."
-
     return {
-        "question": question,
-        "draft": draft,
-        "error": error,
+        "systemPrompt": ANSWER_SYSTEM,
+        "prompt": prompt,
         "questionType": qtype,
         "company": company,
         "role": role,
-        "confidence": 0.7 if len(draft) > 20 else 0.3,
         "profileUsed": list(profile.keys()),
         "memoryCount": len(memories),
     }
 
 
-async def generate_answer_stream(
+async def save_answer(
     question: str,
+    final_answer: str,
     company: str = "",
     role: str = "",
-    job_description: str = "",
-    provider: str = "ollama",
-    api_key: str = "",
-    model: str = "",
-    base_url: str = "",
+    session_id: str = "",
+    original_answer: str | None = None,
 ):
-    profile = sqlite_store.get_profile()
-    memories = await find_similar(question, company, role, top_k=3)
-
-    prompt, qtype = build_prompt(question, profile, memories, job_description, company, role)
-
-    yield json.dumps({"type": "meta", "questionType": qtype, "memoryCount": len(memories)}) + "\n"
-
-    llm = get_provider(provider=provider, api_key=api_key, model=model, base_url=base_url)
-
-    try:
-        async for chunk in llm.generate_stream(system=ANSWER_SYSTEM, prompt=prompt):
-            yield json.dumps({"type": "chunk", "text": chunk}) + "\n"
-        yield json.dumps({"type": "done"}) + "\n"
-    except Exception as e:
-        yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+    """Store a generated/approved answer in the database."""
+    await find_similar  # ensure memory_service is importable
+    from backend.memory.memory_service import save_answer as _save
+    await _save(
+        question=question,
+        final_answer=final_answer,
+        company=company,
+        role=role,
+        session_id=session_id,
+        original_answer=original_answer,
+    )

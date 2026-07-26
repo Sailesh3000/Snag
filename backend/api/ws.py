@@ -3,8 +3,8 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from backend.answer_service import generate_answer
-from backend.memory.memory_service import find_similar_for_fields, save_answer
+from backend.answer_service import prepare_context, save_answer
+from backend.memory.memory_service import find_similar_for_fields
 from backend.memory.sqlite_store import sqlite_store
 from backend.session import Classification, FieldInfo, session_manager
 from backend.tools.tools import classify_field_heuristic
@@ -224,26 +224,15 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                         })
 
             elif msg_type == "answer:generate":
-                provider = payload.get("provider", "ollama")
-                api_key = payload.get("apiKey", "")
-                model = payload.get("model", "")
-                base_url = payload.get("baseUrl", "")
-                ollama_url = payload.get("ollamaUrl", "")
-                if provider == "ollama" and ollama_url:
-                    base_url = ollama_url
-                result = await generate_answer(
+                result = await prepare_context(
                     question=payload.get("question", ""),
                     company=payload.get("company", "") or (session.company or ""),
                     role=payload.get("role", "") or (session.role or ""),
                     job_description=payload.get("jobDescription", ""),
                     session_id=session_id,
-                    provider=provider,
-                    api_key=api_key,
-                    model=model,
-                    base_url=base_url,
                 )
                 await manager.send(session_id, {
-                    "type": "answer:draft",
+                    "type": "answer:context",
                     "payload": result,
                 })
 
@@ -289,6 +278,15 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                     "type": "fill:executed",
                     "payload": {"selector": selector, "value": value, "success": True},
                 })
+
+            elif msg_type == "answer:store":
+                await save_answer(
+                    question=payload.get("question", ""),
+                    final_answer=payload.get("answer", ""),
+                    company=payload.get("company", "") or (session.company or ""),
+                    role=payload.get("role", "") or (session.role or ""),
+                    session_id=session_id,
+                )
 
             elif msg_type == "answer:edit":
                 await save_answer(

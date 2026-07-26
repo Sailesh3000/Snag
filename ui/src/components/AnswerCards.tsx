@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 export interface AnswerDraft {
   question: string;
   draft: string;
+  error?: string | null;
   questionType: string;
   company: string;
   role: string;

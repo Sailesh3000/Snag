@@ -231,13 +231,13 @@ async def generate_answer_tool(question: str, profile: str, memories: str, job_d
         memories: Similar past answers retrieved from memory as JSON.
         job_description: Optional job description for context in markdown.
     """
-    from backend.answer_service import generate_answer
+    from backend.answer_service import prepare_context
 
-    result = await generate_answer(
+    result = await prepare_context(
         question=question,
         job_description=job_description or "",
     )
-    return json.dumps({"draft": result["draft"], "confidence": result["confidence"]})
+    return json.dumps({"prompt": result["prompt"], "systemPrompt": result["systemPrompt"]})
 
 
 @tool

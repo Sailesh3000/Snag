@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     app_name: str = "Snag"
     app_version: str = "0.2.0"
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 8765
 
     embedding_model: str = "all-MiniLM-L6-v2"

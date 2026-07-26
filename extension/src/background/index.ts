@@ -1,4 +1,5 @@
 import { getSettings, getBackendWsUrl } from "../shared/config.js";
+import { llmGenerate, llmGenerateStream } from "../llm/client.js";
 
 interface TabSession {
   sessionId: string;
@@ -7,6 +8,7 @@ interface TabSession {
 
 const tabSessions = new Map<number, TabSession>();
 const activeTabs = new Set<number>();
+const pendingContexts = new Map<string, { tabId: number; company: string; role: string; question: string }>();
 
 async function createSession(tabId: number): Promise<TabSession> {
   const settings = await getSettings();
@@ -21,7 +23,7 @@ async function createSession(tabId: number): Promise<TabSession> {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
-      chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+      handleBackendMessage(tabId, sessionId, msg);
     } catch (e) {
       console.error("[Snag] WS parse error:", e);
     }
@@ -48,6 +50,133 @@ function sendToBackend(tabId: number, message: object) {
   }
 }
 
+async function handleBackendMessage(tabId: number, sessionId: string, msg: { type: string; payload: Record<string, unknown> }) {
+  if (msg.type === "answer:context") {
+    const ctx = pendingContexts.get(sessionId);
+    if (ctx) {
+      pendingContexts.delete(sessionId);
+      await callLLMDirectly(tabId, sessionId, msg.payload, ctx);
+      return;
+    }
+  }
+
+  // Forward all other messages to content script
+  chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+}
+
+async function callLLMDirectly(
+  tabId: number,
+  sessionId: string,
+  context: Record<string, unknown>,
+  original: { company: string; role: string; question: string },
+) {
+  const settings = await getSettings();
+  const systemPrompt = context.systemPrompt as string;
+  const prompt = context.prompt as string;
+
+  // Try streaming first, fall back to non-streaming
+  try {
+    let fullText = "";
+    await llmGenerateStream(systemPrompt, prompt, settings, {
+      onChunk: (chunk) => {
+        fullText += chunk;
+        chrome.tabs.sendMessage(tabId, {
+          type: "answer:stream",
+          payload: { chunk, partial: fullText },
+        }).catch(() => {});
+      },
+      onDone: () => {
+        chrome.tabs.sendMessage(tabId, {
+          type: "answer:draft",
+          payload: {
+            question: original.question,
+            draft: fullText,
+            error: null,
+            questionType: context.questionType,
+            company: original.company || context.company,
+            role: original.role || context.role,
+            confidence: fullText.length > 20 ? 0.7 : 0.3,
+            profileUsed: context.profileUsed,
+            memoryCount: context.memoryCount,
+          },
+        }).catch(() => {});
+
+        // Store the answer in backend
+        sendToBackend(tabId, {
+          type: "answer:store",
+          payload: {
+            question: original.question,
+            answer: fullText,
+            company: original.company || context.company,
+            role: original.role || context.role,
+          },
+        });
+      },
+      onError: (error) => {
+        console.error("[Snag] LLM error:", error);
+        chrome.tabs.sendMessage(tabId, {
+          type: "answer:draft",
+          payload: {
+            question: original.question,
+            draft: "",
+            error: `LLM generation failed: ${error}`,
+            questionType: context.questionType,
+            company: original.company,
+            role: original.role,
+            confidence: 0,
+            profileUsed: [],
+            memoryCount: 0,
+          },
+        }).catch(() => {});
+      },
+    });
+  } catch (e) {
+    console.error("[Snag] LLM stream failed, trying non-streaming:", e);
+    try {
+      const result = await llmGenerate(systemPrompt, prompt, settings);
+      chrome.tabs.sendMessage(tabId, {
+        type: "answer:draft",
+        payload: {
+          question: original.question,
+          draft: result,
+          error: null,
+          questionType: context.questionType,
+          company: original.company || context.company,
+          role: original.role || context.role,
+          confidence: result.length > 20 ? 0.7 : 0.3,
+          profileUsed: context.profileUsed,
+          memoryCount: context.memoryCount,
+        },
+      }).catch(() => {});
+
+      sendToBackend(tabId, {
+        type: "answer:store",
+        payload: {
+          question: original.question,
+          answer: result,
+          company: original.company || context.company,
+          role: original.role || context.role,
+        },
+      });
+    } catch (e2) {
+      chrome.tabs.sendMessage(tabId, {
+        type: "answer:draft",
+        payload: {
+          question: original.question,
+          draft: "",
+          error: `LLM generation failed: ${e2}`,
+          questionType: context.questionType,
+          company: original.company,
+          role: original.role,
+          confidence: 0,
+          profileUsed: [],
+          memoryCount: 0,
+        },
+      }).catch(() => {});
+    }
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender) => {
   const tabId = sender.tab?.id;
   if (!tabId) return;
@@ -55,6 +184,37 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "deactivate") return;
 
   let session = getSession(tabId);
+
+  if (message.type === "answer:generate") {
+    // Intercept answer generation: request context from backend, then call LLM directly
+    if (!session) {
+      createSession(tabId).then((s) => {
+        const payload = message.payload || {};
+        pendingContexts.set(s.sessionId, {
+          tabId,
+          company: payload.company || "",
+          role: payload.role || "",
+          question: payload.question || "",
+        });
+        s.ws.addEventListener("open", () => {
+          s.ws.send(JSON.stringify(message));
+        }, { once: true });
+      });
+      return;
+    }
+
+    const payload = message.payload || {};
+    pendingContexts.set(session.sessionId, {
+      tabId,
+      company: payload.company || "",
+      role: payload.role || "",
+      question: payload.question || "",
+    });
+    sendToBackend(tabId, message);
+    return;
+  }
+
+  // For all other messages, just forward to backend
   if (!session) {
     createSession(tabId).then((s) => sendToBackend(tabId, message));
     return;
@@ -65,6 +225,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   const session = tabSessions.get(tabId);
   if (session) {
+    pendingContexts.delete(session.sessionId);
     session.ws.close();
     tabSessions.delete(tabId);
   }

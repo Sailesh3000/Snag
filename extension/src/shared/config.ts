@@ -2,6 +2,7 @@ const PROVIDER_URLS: Record<string, string> = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com",
   groq: "https://api.groq.com/openai/v1",
+  "openai-compatible": "",
 };
 
 const DEFAULTS = {

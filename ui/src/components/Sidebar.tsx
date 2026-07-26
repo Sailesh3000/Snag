@@ -1,7 +1,7 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useWebSocket } from "../hooks/useWebSocket";
-import { useProvider, getProviderHeaders } from "../hooks/useProvider";
+import { useProvider } from "../hooks/useProvider";
 import FieldList, { type FieldClassification } from "./FieldList";
 import MemorySuggestions from "./MemorySuggestions";
 import AnswerCards, { type AnswerDraft } from "./AnswerCards";
@@ -32,18 +32,14 @@ type DraftEntry = {
 };
 
 export default function Sidebar() {
-  const { connected, messages, send, backendUrl } = useWebSocket();
+  const { connected, messages, send } = useWebSocket();
   const provider = useProvider();
   const [selectedField, setSelectedField] = useState<FieldClassification | null>(null);
   const [draftMap, setDraftMap] = useState<Map<string, DraftEntry>>(new Map());
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [showFeedback, setShowFeedback] = useState(false);
-
-  const apiBase = useMemo(
-    () => backendUrl.replace(/^ws/, "http").replace(/\/$/, "") + "/api",
-    [backendUrl]
-  );
+  const [streamingText, setStreamingText] = useState("");
 
   const statusPayload = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -91,108 +87,63 @@ export default function Sidebar() {
     return entries.map((e) => e.answer);
   }, [draftMap]);
 
-  const headers = useMemo(() => getProviderHeaders(provider), [provider]);
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last) return;
+
+    if (last.type === "answer:stream") {
+      setStreamingText(last.payload.partial as string || "");
+    }
+
+    if (last.type === "answer:draft") {
+      setGenerating(false);
+      const result = last.payload as unknown as AnswerDraft;
+      if (result.error) {
+        setGenerateError(result.error);
+        return;
+      }
+      if (result.draft) {
+        setDraftMap((prev) => {
+          const next = new Map(prev);
+          next.set(result.question, {
+            question: result.question,
+            answer: result,
+            timestamp: Date.now(),
+          });
+          return next;
+        });
+      }
+    }
+  }, [messages]);
 
   const handleGenerate = useCallback(
-    async (field: FieldClassification) => {
+    (field: FieldClassification) => {
       setSelectedField(field);
       setGenerating(true);
       setGenerateError(null);
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60000);
-        const r = await fetch(`${apiBase}/answer/generate`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            question: field.label,
-            questionType: field.questionType || "general",
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({ detail: "Generation failed" }));
-          setGenerateError(err.detail || `HTTP ${r.status}`);
-          return;
-        }
-        const result = await r.json();
-        if (result.error) {
-          setGenerateError(result.error);
-          return;
-        }
-        if (result.draft) {
-          setDraftMap((prev) => {
-            const next = new Map(prev);
-            next.set(field.label, {
-              question: field.label,
-              answer: result,
-              timestamp: Date.now(),
-            });
-            return next;
-          });
-        }
-      } catch (e: any) {
-        if (e.name === "AbortError") {
-          setGenerateError("Request timed out. The model may be loading.");
-        } else {
-          setGenerateError("Cannot reach backend. Is it running?");
-          console.error("[Snag] generate failed:", e);
-        }
-      } finally {
-        setGenerating(false);
-      }
+      setStreamingText("");
+      send({
+        type: "answer:generate",
+        payload: {
+          question: field.label,
+          questionType: field.questionType || "general",
+        },
+      });
     },
-    [apiBase, headers]
+    [send]
   );
 
   const handleRegenerate = useCallback(
-    async (question: string) => {
+    (question: string) => {
       setGenerating(true);
       setGenerateError(null);
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60000);
-        const r = await fetch(`${apiBase}/answer/generate`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ question }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({ detail: "Generation failed" }));
-          setGenerateError(err.detail || `HTTP ${r.status}`);
-          return;
-        }
-        const result = await r.json();
-        if (result.error) {
-          setGenerateError(result.error);
-          return;
-        }
-        if (result.draft) {
-          setDraftMap((prev) => {
-            const next = new Map(prev);
-            next.set(question, {
-              question,
-              answer: result,
-              timestamp: Date.now(),
-            });
-            return next;
-          });
-        }
-      } catch (e: any) {
-        if (e.name === "AbortError") {
-          setGenerateError("Request timed out. The model may be loading.");
-        } else {
-          setGenerateError("Cannot reach backend. Is it running?");
-          console.error("[Snag] regenerate failed:", e);
-        }
-      } finally {
-        setGenerating(false);
-      }
+      setStreamingText("");
+      send({
+        type: "answer:generate",
+        payload: { question },
+      });
     },
-    [apiBase, headers]
+    [send]
   );
 
   return (
@@ -337,17 +288,24 @@ export default function Sidebar() {
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="flex items-center gap-2.5 py-4"
+                className="space-y-2"
               >
-                <div className="relative">
-                  <div className="w-5 h-5 border-2 border-accent/20 border-t-accent rounded-full animate-spin" />
+                <div className="flex items-center gap-2.5 py-2">
+                  <div className="relative">
+                    <div className="w-5 h-5 border-2 border-accent/20 border-t-accent rounded-full animate-spin" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-gray-300 font-medium">Generating answer...</p>
+                    <p className="text-[9px] text-gray-600 mt-0.5">
+                      Using {provider.provider === "ollama" ? "local model" : provider.provider}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[11px] text-gray-300 font-medium">Generating answer...</p>
-                  <p className="text-[9px] text-gray-600 mt-0.5">
-                    Using {provider.provider === "ollama" ? "local model" : provider.provider}
-                  </p>
-                </div>
+                {streamingText && (
+                  <div className="px-2.5 py-2 rounded-lg bg-surface/60 border border-white/[0.03]">
+                    <p className="text-[10px] text-gray-300 whitespace-pre-wrap leading-relaxed">{streamingText}<span className="inline-block w-1 h-3 bg-accent animate-pulse ml-0.5" /></p>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <div className="flex items-center gap-2 py-3 text-gray-600">
