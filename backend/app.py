@@ -50,6 +50,7 @@ async def startup():
     logger.info("Embedding model loaded")
 
     logger.info(f"{settings.app_name} v{settings.app_version} starting")
+    logger.info(f"Ollama URL: {settings.ollama_url}")
 
 
 @app.on_event("shutdown")

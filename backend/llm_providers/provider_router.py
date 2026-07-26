@@ -33,14 +33,19 @@ class OllamaProvider(LLMProvider):
                     "prompt": f"/no_think\n{prompt}",
                     "stream": False,
                     "options": {
-                        "num_predict": kwargs.get("max_tokens", 300),
+                        "num_predict": kwargs.get("max_tokens", 1024),
                         "temperature": kwargs.get("temperature", 0.7),
                         "top_p": kwargs.get("top_p", 0.9),
                     },
                 },
             )
             r.raise_for_status()
-            return r.json().get("response", "").strip()
+            body = r.json()
+            raw = body.get("response", "").strip()
+            if not raw and body.get("thinking"):
+                raw = body["thinking"].strip()
+            logger.info(f"Ollama response: {len(raw)} chars, done_reason={body.get('done_reason')}")
+            return raw
 
     async def generate_stream(self, system: str, prompt: str, **kwargs):
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -53,7 +58,7 @@ class OllamaProvider(LLMProvider):
                     "prompt": f"/no_think\n{prompt}",
                     "stream": True,
                     "options": {
-                        "num_predict": kwargs.get("max_tokens", 300),
+                        "num_predict": kwargs.get("max_tokens", 1024),
                         "temperature": kwargs.get("temperature", 0.7),
                         "top_p": kwargs.get("top_p", 0.9),
                     },
@@ -231,8 +236,11 @@ class GroqProvider(LLMProvider):
 
 def get_provider(provider: str, api_key: str = "", model: str = "", base_url: str = "") -> LLMProvider:
     if provider == "ollama":
+        from backend.config import settings
+        effective_url = base_url or settings.ollama_url
+        logger.info(f"Ollama provider: base_url={base_url!r}, effective_url={effective_url!r}")
         return OllamaProvider(
-            base_url=base_url or "http://127.0.0.1:11434",
+            base_url=effective_url,
             model=model or "qwen3:8b",
         )
     elif provider == "openai":

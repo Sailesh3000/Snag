@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     sqlite_path: str = "data/snag.db"
 
+    ollama_url: str = "http://127.0.0.1:11434"
+
     log_level: str = "INFO"
     cors_origins: list[str] = ["*"]
 
