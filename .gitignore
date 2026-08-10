@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 data/
 *.db
+logs/
 .env
 dist/
 build/

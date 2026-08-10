@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
+export type ConnectionStatus = "connected" | "reconnecting" | "offline";
+
 export interface WebSocketMessage {
   type: string;
   payload: Record<string, unknown>;
@@ -7,6 +9,7 @@ export interface WebSocketMessage {
 
 interface UseWebSocketReturn {
   connected: boolean;
+  connectionStatus: ConnectionStatus;
   sessionId: string | null;
   lastMessage: WebSocketMessage | null;
   messages: WebSocketMessage[];
@@ -29,11 +32,14 @@ function getBackendUrl(): string {
 
 export function useWebSocket(): UseWebSocketReturn {
   const [connected, setConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("reconnecting");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const [messages, setMessages] = useState<WebSocketMessage[]>([]);
   const [backendUrl, setBackendUrl] = useState(getBackendUrl);
   const wsRef = useRef<WebSocket | null>(null);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage) {
@@ -68,6 +74,8 @@ export function useWebSocket(): UseWebSocketReturn {
         const ws = new WebSocket(`${wsUrl}/ws/${session}`);
 
         ws.onopen = () => {
+          retryCountRef.current = 0;
+          setConnectionStatus("connected");
           setConnected(true);
           setSessionId(session);
         };
@@ -85,7 +93,10 @@ export function useWebSocket(): UseWebSocketReturn {
 
         ws.onclose = () => {
           setConnected(false);
-          setTimeout(connect, 3000);
+          const attempt = retryCountRef.current++;
+          const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+          setConnectionStatus(attempt >= 5 ? "offline" : "reconnecting");
+          retryTimerRef.current = setTimeout(connect, delay);
         };
 
         ws.onerror = () => ws.close();
@@ -96,10 +107,12 @@ export function useWebSocket(): UseWebSocketReturn {
       connect();
     } else {
       setConnected(true);
+      setConnectionStatus("connected");
     }
 
     return () => {
       window.removeEventListener("message", handleParentMessage);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       wsRef.current?.close();
     };
   }, [backendUrl]);
@@ -117,5 +130,5 @@ export function useWebSocket(): UseWebSocketReturn {
     }
   }, []);
 
-  return { connected, sessionId, lastMessage, messages, send, backendUrl };
+  return { connected, connectionStatus, sessionId, lastMessage, messages, send, backendUrl };
 }

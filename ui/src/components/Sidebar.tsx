@@ -32,7 +32,7 @@ type DraftEntry = {
 };
 
 export default function Sidebar() {
-  const { connected, messages, send } = useWebSocket();
+  const { connectionStatus, messages, send } = useWebSocket();
   const provider = useProvider();
   const [selectedField, setSelectedField] = useState<FieldClassification | null>(null);
   const [draftMap, setDraftMap] = useState<Map<string, DraftEntry>>(new Map());
@@ -180,7 +180,7 @@ export default function Sidebar() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </button>
-            <StatusBadge connected={connected} />
+            <StatusBadge status={connectionStatus} />
           </div>
         </div>
         <div className="glow-line mt-3" />
@@ -336,8 +336,22 @@ export default function Sidebar() {
             </button>
             <div className="w-px h-3 bg-gray-700" />
             <div className="flex items-center gap-1">
-              <div className={`w-1 h-1 rounded-full ${connected ? "bg-emerald-400/60" : "bg-gray-600"}`} />
-              <span className="text-[9px] text-gray-600">{connected ? "Connected" : "Offline"}</span>
+              <div
+                className={`w-1 h-1 rounded-full ${
+                  connectionStatus === "connected"
+                    ? "bg-emerald-400/60"
+                    : connectionStatus === "reconnecting"
+                    ? "bg-amber-400/60"
+                    : "bg-red-500/70"
+                }`}
+              />
+              <span className="text-[9px] text-gray-600">
+                {connectionStatus === "connected"
+                  ? "Connected"
+                  : connectionStatus === "reconnecting"
+                  ? "Reconnecting"
+                  : "Offline"}
+              </span>
             </div>
           </div>
         </div>

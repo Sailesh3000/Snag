@@ -1,4 +1,7 @@
 import logging
+import logging.handlers
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -11,13 +14,53 @@ from backend.api.routes import router
 from backend.api.ws import ws_router
 from backend.config import settings
 
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+
+def setup_logging():
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    fh = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "snag.log", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    )
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.WARNING)
+    ch.setFormatter(fmt)
+    root.addHandler(ch)
+
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from backend.memory.sqlite_store import sqlite_store
+    sqlite_store.connect()
+    logger.info("SQLite connected")
+
+    from backend.memory.embeddings import get_model
+    get_model()
+    logger.info("Embedding model loaded")
+
+    logger.info(f"{settings.app_name} v{settings.app_version} starting")
+    logger.info(f"Ollama URL: {settings.ollama_url}")
+    try:
+        yield
+    finally:
+        sqlite_store.close()
+        logger.info("shutdown complete")
+
+
+app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,27 +80,6 @@ app.include_router(ws_router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": settings.app_version}
-
-
-@app.on_event("startup")
-async def startup():
-    from backend.memory.sqlite_store import sqlite_store
-    sqlite_store.connect()
-    logger.info("SQLite connected")
-
-    from backend.memory.embeddings import get_model
-    get_model()
-    logger.info("Embedding model loaded")
-
-    logger.info(f"{settings.app_name} v{settings.app_version} starting")
-    logger.info(f"Ollama URL: {settings.ollama_url}")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    from backend.memory.sqlite_store import sqlite_store
-    sqlite_store.close()
-    logger.info("shutdown complete")
 
 
 if __name__ == "__main__":

@@ -80,6 +80,7 @@
 { type: "answer:draft", payload: { fieldId, question, draft, confidence, sources } }
 { type: "fill:preview", payload: { fieldId, value } }
 { type: "fill:executed", payload: { fieldId, success } }
+{ type: "backend:status", payload: { online: boolean } }  // from service-worker health ping
 ```
 
 ### 2.2 Backend (`backend/`)
@@ -233,16 +234,44 @@ CREATE TABLE answers (
 - User must explicitly approve each field fill (no auto-submit)
 - Extension only injects on supported job sites (click to activate)
 - Rate-limit WebSocket messages
-- Minimal permissions: `activeTab`, `storage`, `scripting`
+- Minimal permissions: `activeTab`, `storage`, `scripting`, `alarms`; `host_permissions` limited to `http://127.0.0.1:8765/*`
+
+## 7. Reliability & Always-On Operation
+
+| Concern | Mechanism |
+|---|---|
+| Concurrent DB access | SQLite **WAL mode** + `busy_timeout=5000` on every connection |
+| Crash diagnostics | `logs/snag.log` via `RotatingFileHandler` (5MB × 5 backups, INFO) + console WARNING |
+| LLM outages | `call_with_retry()` in `provider_router.py` — 2 retries (1s, 2s backoff) on timeout/connect/5xx; all calls capped at 60s |
+| LLM failure UX | Structured `LLMError` → `{"error": true, "code", "message"}` for the frontend to display |
+| Startup safety | `start.py` preflight: hard-fails if the port is in use; warns (non-fatal) if Ollama is unreachable |
+| Backend goes down | Sidebar WebSocket reconnect with exponential backoff (1s → 30s cap), statuses `Live` / `Reconnecting` / `Offline` |
+| Silent backend death | Service worker pings `/health` every 30s (`alarms`), broadcasts `backend:status` to open sidebars |
+| Always-on on Windows | `setup_service.ps1` installs `SnagBackend` via NSSM: auto-start, restart-on-failure (5s delay), logs to `logs/service_*.log` |
+
+### Answer Prompts
+
+The prompt builder (`backend/prompts/templates.py`) never substitutes a canned
+question — the user's actual question text is always injected. Every prompt
+receives the profile, past approved answers (style guide), and job description
+(if provided). Prompts are kept deliberately lean; per-type guidance is a single
+one-line hint (e.g. STAR format for behavioral questions).
 
 ---
 
-## 7. Deployment
+## 8. Deployment
 
 ### Local Development
 ```bash
-python start.py  # Builds UI + Extension + starts backend
+python start.py  # Builds UI + Extension + preflight checks + starts backend
 ```
+
+### Windows Service (always-on)
+```powershell
+.\setup_service.ps1              # NSSM: install + start SnagBackend
+.\setup_service.ps1 -Uninstall   # remove the service
+```
+Run as Administrator. Auto-installs NSSM via winget if missing.
 
 ### Docker
 ```bash
@@ -256,7 +285,7 @@ docker compose up --build
 
 ---
 
-## 8. Implementation Phases
+## 9. Implementation Phases
 
 | Phase | Deliverable | Status |
 |---|---|---|

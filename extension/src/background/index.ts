@@ -1,4 +1,4 @@
-import { getSettings, getBackendWsUrl } from "../shared/config.js";
+import { getSettings, getBackendWsUrl, getBackendHttpUrl } from "../shared/config.js";
 import { llmGenerate, llmGenerateStream } from "../llm/client.js";
 
 interface TabSession {
@@ -9,6 +9,30 @@ interface TabSession {
 const tabSessions = new Map<number, TabSession>();
 const activeTabs = new Set<number>();
 const pendingContexts = new Map<string, { tabId: number; company: string; role: string; question: string }>();
+
+async function pingBackendHealth() {
+  const settings = await getSettings();
+  const httpUrl = getBackendHttpUrl(settings);
+  let online = false;
+  try {
+    const resp = await fetch(`${httpUrl}/health`, { signal: AbortSignal.timeout(5000) });
+    if (resp.ok) online = true;
+  } catch {}
+  for (const tabId of activeTabs) {
+    chrome.tabs.sendMessage(tabId, {
+      type: "backend:status",
+      payload: { online },
+    }).catch(() => {});
+  }
+}
+
+chrome.alarms.create("snag-health-ping", { periodInMinutes: 0.5 });
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "snag-health-ping") {
+    pingBackendHealth();
+  }
+});
 
 async function createSession(tabId: number): Promise<TabSession> {
   const settings = await getSettings();

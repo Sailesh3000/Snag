@@ -3,7 +3,8 @@
   "name": "Snag",
   "version": "0.2.0",
   "description": "AI-powered job application copilot. Bring your own API key.",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "permissions": ["activeTab", "storage", "scripting", "alarms"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
   "background": {
     "service_worker": "background/index.js",
     "type": "module"

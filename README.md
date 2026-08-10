@@ -80,7 +80,7 @@ Snag/
 │   ├── manifest.json           # Manifest V3
 │   ├── settings/               # Options page (API config)
 │   ├── src/
-│   │   ├── background/         # Service worker
+│   │   ├── background/         # Service worker (health ping + WS)
 │   │   ├── content/            # Content script
 │   │   └── shared/             # Config utility
 │   └── icons/                  # 16/48/128px SVG
@@ -89,6 +89,7 @@ Snag/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── Sidebar.tsx     # Main layout
+│   │   │   ├── StatusBadge.tsx # Live/Reconnecting/Offline
 │   │   │   ├── ProfileSettings.tsx
 │   │   │   ├── FeedbackModal.tsx
 │   │   │   ├── AnswerCards.tsx
@@ -99,9 +100,11 @@ Snag/
 │   │       └── useProvider.ts
 │   └── vite.config.ts
 │
+├── logs/                       # Runtime logs (created automatically)
 ├── Dockerfile
 ├── docker-compose.yml
-├── start.py                    # Build + launch script
+├── start.py                    # Build + preflight + launch script
+├── setup_service.ps1           # Install SnagBackend as a Windows service (NSSM)
 └── SPECS.md
 ```
 
@@ -135,7 +138,27 @@ This will:
 1. Build the React UI (`ui/build/`)
 2. Copy it into the extension (`extension/sidebar/`)
 3. Compile extension TypeScript
-4. Start the backend on `http://127.0.0.1:8765`
+4. Run preflight checks (port availability, Ollama reachability)
+5. Start the backend on `http://127.0.0.1:8765`
+
+> [!TIP]
+> Backend logs are written to `logs/snag.log` (rotating, 5MB × 5 backups).
+> Warnings and errors also print to the console. SQLite runs in WAL mode
+> with a 5s busy timeout so concurrent readers don't hit "database is locked".
+
+### Run as a Windows Service (optional)
+
+For always-on use, install the backend as a Windows service with [NSSM](https://nssm.cc/):
+
+```powershell
+# From an elevated (Administrator) PowerShell
+.\setup_service.ps1              # install + start SnagBackend
+.\setup_service.ps1 -Uninstall   # remove the service
+```
+
+The script auto-installs NSSM via winget if it's missing (or pass `-ForceInstallNssm`).
+The service runs `python -m backend.app`, auto-starts on boot, restarts on
+failure (5s delay), and writes to `logs/service_stdout.log` / `logs/service_stderr.log`.
 
 ### Load Extension in Chrome
 
@@ -215,6 +238,19 @@ For Ollama (default), no headers needed.
 | Anthropic | claude-3-5-haiku | No |
 | Groq | llama-3.1-70b-versatile | Yes |
 | OpenAI-Compatible | configurable | Varies |
+
+---
+
+## Reliability
+
+Built to run unattended as a persistent local tool:
+
+- **SQLite WAL mode** — concurrent readers + one writer with a 5s busy timeout (no "database is locked")
+- **Structured LLM errors** — retries with exponential backoff (1s, 2s) on timeouts/connect/5xx, then returns `{"error": true, "code": "LLM_TIMEOUT" | "LLM_UNREACHABLE" | "LLM_HTTP_ERROR" | "LLM_ERROR", "message": "..."}`; all provider calls time out at 60s
+- **Startup preflight** — `start.py` verifies the port is free and warns (non-fatal) if Ollama is unreachable before launching
+- **WebSocket reconnect** — the sidebar backs off exponentially (1s → 30s cap) and shows `Live` / `Reconnecting` / `Offline`
+- **Extension health ping** — the service worker pings `/health` every 30s and broadcasts `backend:status` to the sidebar
+- **Windows service** — `setup_service.ps1` registers the backend under NSSM with auto-start and restart-on-failure
 
 ---
 
