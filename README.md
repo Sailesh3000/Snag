@@ -414,53 +414,24 @@ cd extension && npm run build
 
 ---
 
-## Positioning & Competitive Landscape
+## Positioning
 
-A pre-pilot survey compared Snag against cloud AI-copilot tools (Simplify Copilot,
-Teal, Jobright, LazyApply, Sonara, JobCopilot, AIApply). Two kinds of claims went
-into that survey, and they need different treatment:
+What's actually true about Snag today, for anyone citing it in pilot/marketing material:
 
-- **Claims about Snag itself** — checked directly against this codebase below.
-  Several were stale (the survey predates work landed in this repo) or need a
-  privacy caveat that changes the headline claim.
-- **Claims about competitors** (their features/pricing/user counts) — sourced from
-  those companies' own marketing pages by whoever ran the survey. I have not
-  independently re-verified them, and competitor products change. Treat the
-  competitor side as "reportedly, per their own marketing," not as fact this
-  project has confirmed.
-
-### What's actually true about Snag, checked against the code
-
-| Survey claim | Verdict | Actual state |
-|---|---|---|
-| "Runs entirely on your device" / "no cloud" | **Needs a caveat** | True only with the Ollama provider. With OpenAI/Anthropic/Groq/OpenAI-compatible (all BYOK options Snag supports), the question text, your profile, and job context ARE sent to that provider's cloud API — see `extension/src/llm/*.ts`. The backend itself never leaves your machine and never sees your API key, but "no cloud" is not universally true — it depends on the provider you pick. |
-| Resume import: "planned" / "future LLM-based extraction" | **Outdated — already shipped** | Implemented: upload → text extraction (`backend/resume_parser.py`) → LLM-based field extraction, reviewed before saving. See Resume Import above. |
-| Semantic retrieval / memory | **True** | Sentence-transformer embeddings + cosine similarity (`backend/memory/memory_service.py`), not exact-match. |
-| "Learn from approved answers" | **True, with a fix already applied** | Only stores on a *confirmed* successful fill (not on generation, not on a fill that silently failed) — see the fill-confirmation state machine below. |
-| Cross-question paraphrase matching ("why do you want to work here" ≈ "why are you interested") | **Outdated — already shipped, not a P1 backlog item** | This is exactly what the embedding-based retrieval already does, cross-company, ranked with a same-company boost (Memory & Retrieval above). |
-| "Mandatory user review before fill" | **Needs a caveat** | True for LLM-generated answers and for sensitive fields (work authorization, visa status, gender, DOB), which always go through Accept/Edit/Skip. NOT true for ordinary static fields (name, email, phone, address, links) — those auto-fill instantly with no review step, by design (this is standard autofill behavior, not a gap, but it's a different flow than the "review everything" framing implies). |
-| Indian job portal support | **Not implemented; not currently planned in this repo** | No Naukri/Shine/TimesJobs-specific detection exists. Field/label detection is generic (any DOM form), so it may work incidentally, but there's no dedicated support or roadmap item for it yet — it's a market-research suggestion, not an existing backlog entry. |
-| Auto-submission | **True — confirmed never implemented, by design** | No code path submits a form. Filling always stops at the field; the user submits manually. |
-| Code hosted on GitHub | **True** | `github.com/Sailesh3000/Snag`. |
-| Data encrypted at rest | **False — do not repeat this claim** | `data/snag.db` and `data/auth_token.txt` are plain, unencrypted files. See Security above. |
-
-### Roadmap, corrected against current state
-
-- ~~Resume Import & Parsing~~ — **done** (see Resume Import above).
-- ~~Auto-Adapt Answers / paraphrase matching~~ — **done** (see Memory & Retrieval above).
-- Export / bulk-reset stored memory — **not built**; the Memory management screen
-  currently does individual view/edit/delete only, no export or "reset everything."
-- Usage analytics (time saved, fill success rate, correction rate) — **not built**;
-  nothing in this repo currently measures or logs these. If the pilot wants these
-  numbers, someone needs to track them manually (e.g. a shared spreadsheet) or this
-  needs to be built as a real feature first.
-- Indian job portal-specific detection — **not built**, see above.
-- Auto-submission, cover-letter generation, enterprise/multi-account features —
-  correctly listed as not-yet-built in the survey; still true.
-
-The survey's pilot success metrics (≥50% time saved, ≤30% answer-correction rate,
-≥80% fill success, ≥70% memory-reuse rate, ≥80% intent-to-continue) are goals to
-measure *during* the pilot, not results — nothing in this repo has measured them yet.
+- Learns from approved answers (semantic retrieval, cross-company reuse) and
+  imports a resume into your profile — both live, not roadmap items.
+- Never auto-submits an application — filling always stops at the field.
+- "Runs locally" applies to the backend and your data, not necessarily the LLM
+  call: with the Ollama provider, generation is fully local; with
+  OpenAI/Anthropic/Groq/OpenAI-compatible (all supported, BYOK), the question,
+  profile, and job context are sent to that provider's API. The backend itself
+  never leaves your machine and never sees your API key.
+- Review is mandatory for generated answers and for sensitive fields (work
+  authorization, visa status, gender, DOB). Ordinary static fields (name, email,
+  phone, address, links) auto-fill instantly without a review step.
+- No Indian job portal-specific support exists yet (generic form detection may
+  work incidentally, but nothing is tailored to Naukri/Shine/etc.).
+- No encryption at rest for local data (see Security above).
 
 ---
 
