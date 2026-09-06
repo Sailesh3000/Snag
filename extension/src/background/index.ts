@@ -9,6 +9,7 @@ interface TabSession {
 const tabSessions = new Map<number, TabSession>();
 const activeTabs = new Set<number>();
 const pendingContexts = new Map<string, { tabId: number; company: string; role: string; question: string; fieldId: string }>();
+const pendingResumeContexts = new Map<string, { tabId: number }>();
 
 async function pingBackendHealth() {
   const settings = await getSettings();
@@ -89,8 +90,54 @@ async function handleBackendMessage(tabId: number, sessionId: string, msg: { typ
     }
   }
 
+  if (msg.type === "resume:context") {
+    const ctx = pendingResumeContexts.get(sessionId);
+    if (ctx) {
+      pendingResumeContexts.delete(sessionId);
+      await extractResumeFieldsDirectly(tabId, msg.payload);
+      return;
+    }
+  }
+
   // Forward all other messages to content script
   chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+}
+
+interface ExtractedResumeFields {
+  first_name: string; last_name: string; email: string; phone: string;
+  city: string; state: string; country: string;
+  linkedin: string; github: string; portfolio: string;
+  education: string[]; experience: string[]; skills: string[];
+}
+
+export function parseResumeExtractionJson(raw: string): ExtractedResumeFields {
+  // Models sometimes wrap JSON in ```json ... ``` despite instructions not to.
+  const stripped = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const parsed = JSON.parse(stripped);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Model did not return a JSON object");
+  }
+  return parsed as ExtractedResumeFields;
+}
+
+async function extractResumeFieldsDirectly(tabId: number, context: Record<string, unknown>) {
+  const settings = await getSettings();
+  const systemPrompt = context.systemPrompt as string;
+  const prompt = context.prompt as string;
+
+  try {
+    const raw = await llmGenerate(systemPrompt, prompt, settings);
+    const fields = parseResumeExtractionJson(raw);
+    chrome.tabs.sendMessage(tabId, {
+      type: "resume:extracted",
+      payload: { fields, error: null },
+    }).catch(() => {});
+  } catch (e) {
+    chrome.tabs.sendMessage(tabId, {
+      type: "resume:extracted",
+      payload: { fields: null, error: `Couldn't extract profile fields: ${e}` },
+    }).catch(() => {});
+  }
 }
 
 async function callLLMDirectly(
@@ -232,6 +279,23 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     return;
   }
 
+  if (message.type === "resume:extract") {
+    // Same intercept-then-call-LLM-directly pattern as answer:generate.
+    if (!session) {
+      createSession(tabId).then((s) => {
+        pendingResumeContexts.set(s.sessionId, { tabId });
+        s.ws.addEventListener("open", () => {
+          s.ws.send(JSON.stringify(message));
+        }, { once: true });
+      });
+      return;
+    }
+
+    pendingResumeContexts.set(session.sessionId, { tabId });
+    sendToBackend(tabId, message);
+    return;
+  }
+
   // For all other messages, just forward to backend
   if (!session) {
     createSession(tabId).then((s) => sendToBackend(tabId, message));
@@ -244,6 +308,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   const session = tabSessions.get(tabId);
   if (session) {
     pendingContexts.delete(session.sessionId);
+    pendingResumeContexts.delete(session.sessionId);
     session.ws.close();
     tabSessions.delete(tabId);
   }

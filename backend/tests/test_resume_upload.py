@@ -68,3 +68,27 @@ def test_uploaded_resume_is_listed():
     assert resp.status_code == 200
     names = [r["name"] for r in resp.json()]
     assert "resume.pdf" in names
+
+
+def test_upload_returns_extracted_text_for_a_plain_text_resume():
+    client = make_client()
+    resp = client.post(
+        "/api/profile/resume/upload",
+        files={"file": ("resume.txt", b"Ada Lovelace\nSoftware Engineer", "text/plain")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["extractionError"] is None
+    assert "Ada Lovelace" in body["resumeText"]
+
+
+def test_upload_reports_extraction_error_for_unsupported_type_without_failing_the_upload():
+    client = make_client()
+    resp = client.post(
+        "/api/profile/resume/upload",
+        files={"file": ("resume.docx", b"whatever bytes", "application/vnd.openxmlformats")},
+    )
+    assert resp.status_code == 200  # the file is still saved
+    body = resp.json()
+    assert body["resumeText"] is None
+    assert body["extractionError"]

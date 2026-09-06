@@ -61,7 +61,7 @@ live path.
 |---|---|
 | **Site Detector** | Match current URL against supported job site patterns. |
 | **DOM Extractor** | Traverse DOM to extract form fields: labels, placeholders, types, select/checkbox options. Return structured `Field[]`. |
-| **Sidebar** | React SPA injected as floating panel. Toggle via toolbar icon. Sections: Profile, Fields, Questions, Answers, Memory, Feedback. |
+| **Sidebar** | React SPA injected as floating panel. Toggle via toolbar icon. Sections: Profile (incl. resume import), Fields, Questions, Answers, Memory, Feedback. |
 | **Settings Page** | Chrome extension options page. Configure LLM provider (Ollama/OpenAI/Anthropic/Groq/OpenAI-compatible), API key, backend URL. |
 | **Connection Layer** | WebSocket ↔ Backend. Send page metadata, receive fill instructions. |
 

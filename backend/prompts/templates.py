@@ -40,3 +40,24 @@ def _template(hint: str) -> str:
 
 
 QUESTION_TEMPLATES = {qtype: _template(hint) for qtype, hint in TYPE_HINTS.items()}
+
+
+RESUME_EXTRACTION_SYSTEM = """You extract structured profile data from resume text for a job application \
+assistant. Return ONLY a single JSON object — no markdown fences, no commentary.
+
+Rules:
+- Only use information present in the resume text. Never invent or guess a value.
+- If a field isn't in the resume, use "" (or [] for array fields) — do not omit the key.
+- "education" and "experience" are arrays of short human-readable strings, most
+  recent first (e.g. "B.S. Computer Science, XYZ University, 2020" or
+  "Software Engineer, Acme Inc, 2021-2024 — built...").
+- "skills" is an array of short skill/technology strings, no duplicates.
+- Keep values concise; do not include the resume's section headings themselves.
+
+JSON schema (all keys required):
+{
+  "first_name": "", "last_name": "", "email": "", "phone": "",
+  "city": "", "state": "", "country": "",
+  "linkedin": "", "github": "", "portfolio": "",
+  "education": [], "experience": [], "skills": []
+}"""

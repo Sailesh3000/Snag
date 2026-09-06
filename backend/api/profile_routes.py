@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from backend.auth import require_auth
 from backend.memory.sqlite_store import sqlite_store
+from backend.resume_parser import ResumeParseError, extract_text
 
 router = APIRouter(prefix="/api/profile", dependencies=[Depends(require_auth)])
 
@@ -65,7 +66,21 @@ async def upload_resume(file: UploadFile):
         await f.write(content)
 
     resume_id = sqlite_store.add_resume(original_name, str(dest))
-    return {"id": resume_id, "name": original_name, "path": str(dest)}
+
+    resume_text: str | None = None
+    extraction_error: str | None = None
+    try:
+        resume_text = extract_text(original_name, content)
+    except ResumeParseError as e:
+        extraction_error = str(e)
+
+    return {
+        "id": resume_id,
+        "name": original_name,
+        "path": str(dest),
+        "resumeText": resume_text,
+        "extractionError": extraction_error,
+    }
 
 
 @router.get("/resumes")

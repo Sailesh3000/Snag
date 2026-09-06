@@ -8,6 +8,8 @@ from backend.answer_service import prepare_context, save_answer
 from backend.auth import require_ws_auth
 from backend.memory.memory_service import find_similar_for_fields
 from backend.memory.sqlite_store import sqlite_store
+from backend.prompts.templates import RESUME_EXTRACTION_SYSTEM
+from backend.resume_service import build_resume_extraction_prompt
 from backend.session import Classification, FieldInfo, session_manager
 from backend.tools.tools import classify_field_heuristic
 
@@ -270,6 +272,16 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                 await manager.send(session_id, {
                     "type": "answer:context",
                     "payload": result,
+                })
+
+            elif msg_type == "resume:extract":
+                resume_text = (payload.get("resumeText") or "")[:8000]
+                await manager.send(session_id, {
+                    "type": "resume:context",
+                    "payload": {
+                        "systemPrompt": RESUME_EXTRACTION_SYSTEM,
+                        "prompt": build_resume_extraction_prompt(resume_text),
+                    },
                 })
 
             elif msg_type == "fill:preview":

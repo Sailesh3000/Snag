@@ -93,6 +93,21 @@ def test_fill_result_failure_does_not_save_and_reports_failure():
         ws.__exit__(None, None, None)
 
 
+def test_resume_extract_returns_prompt_context():
+    ws, conn = connect()
+    try:
+        conn.send_json({
+            "type": "resume:extract",
+            "payload": {"resumeText": "Ada Lovelace\nSoftware Engineer\nPython, C++"},
+        })
+        result = conn.receive_json()
+        assert result["type"] == "resume:context"
+        assert "Ada Lovelace" in result["payload"]["prompt"]
+        assert result["payload"]["systemPrompt"]  # never empty
+    finally:
+        ws.__exit__(None, None, None)
+
+
 def test_fill_reject_never_saves():
     before = sqlite_store._conn.execute("SELECT COUNT(*) as c FROM answers").fetchone()["c"]
 

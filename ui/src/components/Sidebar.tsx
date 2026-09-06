@@ -2,10 +2,12 @@ import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useProvider } from "../hooks/useProvider";
+import { useProfile } from "../hooks/useProfile";
 import FieldList, { type FieldClassification } from "./FieldList";
 import MemorySuggestions from "./MemorySuggestions";
 import AnswerCards, { type FieldAnswerState } from "./AnswerCards";
 import ProfileSettings from "./ProfileSettings";
+import ResumeImport from "./ResumeImport";
 import MemoryManager from "./MemoryManager";
 import FeedbackModal from "./FeedbackModal";
 import StatusBadge from "./StatusBadge";
@@ -47,6 +49,7 @@ function newRequestId(): string {
 export default function Sidebar() {
   const { connectionStatus, messages, send } = useWebSocket();
   const provider = useProvider();
+  const profileApi = useProfile();
   const [fieldAnswers, setFieldAnswers] = useState<Map<string, FieldAnswerState>>(new Map());
   const [showFeedback, setShowFeedback] = useState(false);
   const [showMemoryManager, setShowMemoryManager] = useState(false);
@@ -419,7 +422,10 @@ export default function Sidebar() {
         </motion.div>
 
         <Section title="Profile" icon="user">
-          <ProfileSettings />
+          <div className="space-y-2.5">
+            <ResumeImport profile={profileApi} send={send} messages={messages} />
+            <ProfileSettings profile={profileApi} />
+          </div>
         </Section>
 
         <Section title="Detected Fields" icon="list" badge={classifications.length || undefined}>

@@ -6,11 +6,13 @@ interface Profile {
   [key: string]: string;
 }
 
-interface UseProfileReturn {
+export interface UseProfileReturn {
   profile: Profile;
   loading: boolean;
   updateField: (key: string, value: string) => Promise<void>;
   refresh: () => Promise<void>;
+  apiBase: string;
+  authHeaders: Record<string, string>;
 }
 
 export function useProfile(): UseProfileReturn {
@@ -62,5 +64,5 @@ export function useProfile(): UseProfileReturn {
     }
   }, [apiBase, authHeaders]);
 
-  return { profile, loading, updateField, refresh };
+  return { profile, loading, updateField, refresh, apiBase, authHeaders };
 }

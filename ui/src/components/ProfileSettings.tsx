@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useProfile } from "../hooks/useProfile";
+import type { UseProfileReturn } from "../hooks/useProfile";
 
 interface FieldDef {
   key: string;
@@ -101,8 +101,12 @@ const FIELD_GROUPS: { title: string; fields: FieldDef[] }[] = [
   },
 ];
 
-export default function ProfileSettings() {
-  const { profile, loading, updateField } = useProfile();
+interface ProfileSettingsProps {
+  profile: UseProfileReturn;
+}
+
+export default function ProfileSettings({ profile: profileApi }: ProfileSettingsProps) {
+  const { profile, loading, updateField } = profileApi;
   const [editKey, setEditKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saved, setSaved] = useState<string | null>(null);

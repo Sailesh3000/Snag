@@ -18,7 +18,7 @@ flowchart LR
     style D fill:#8b5cf6,color:#fff
 ```
 
-**Chrome Extension** — Detects form fields, injects sidebar, calls the LLM directly (BYOK), fills answers
+**Chrome Extension** — Detects form fields, injects sidebar, calls the LLM directly (BYOK), fills answers, imports a resume into your profile
 **FastAPI Backend** — Classifies fields, builds the prompt/context, stores memory. Binds to `127.0.0.1` only and requires a per-installation auth token on every request (see Security below) — it never calls an LLM or sees your API key itself
 **LLM Provider** — Ollama (local), OpenAI, Anthropic, Groq, or OpenAI-compatible — called from the extension, not the backend
 **SQLite** — Profile data, session history, saved answers with embeddings — local, unencrypted (see Security)
@@ -65,6 +65,8 @@ Snag/
 │   ├── config.py               # Pydantic settings
 │   ├── answer_service.py       # Builds the prompt/context sent to the extension's LLM call
 │   ├── auth.py                 # Per-installation token check (REST + WebSocket)
+│   ├── resume_parser.py        # Extracts raw text from an uploaded .pdf/.txt resume
+│   ├── resume_service.py       # Builds the resume -> profile-fields extraction prompt
 │   ├── memory/
 │   │   ├── sqlite_store.py     # SQLite DB wrapper
 │   │   ├── memory_service.py   # Semantic search (numpy)
@@ -96,6 +98,7 @@ Snag/
 │   │   │   ├── FeedbackModal.tsx
 │   │   │   ├── AnswerCards.tsx  # Accept/Edit/Regenerate/Skip + fill-confirmation states
 │   │   │   ├── MemoryManager.tsx # View/edit/delete learned answers
+│   │   │   ├── ResumeImport.tsx # Upload a resume, review extracted fields, apply
 │   │   │   └── ...
 │   │   └── hooks/
 │   │       ├── useWebSocket.ts
@@ -212,13 +215,36 @@ browser, with the user's own key — the backend never sees it).
 | `GET` | `/health` | Health check (no auth — used by the extension's health-ping) |
 | `GET` | `/api/profile` | Get profile fields |
 | `PUT` | `/api/profile/{key}` | Update a profile field |
-| `POST` | `/api/profile/resume/upload` | Upload a resume (stored under a generated filename, never the client's) |
+| `POST` | `/api/profile/resume/upload` | Upload a resume (stored under a generated filename, never the client's); returns extracted raw text |
 | `POST` | `/api/answer/prepare` | Build the prompt/context for a question (used by the WS flow; also available over REST) |
+| `WS` | `resume:extract` → `resume:context` | Build the prompt/context for extracting profile fields from resume text (extension calls the LLM with it, same as answer generation) |
 | `GET` | `/api/memory/answers` | List the 50 most recent approved answers |
 | `PUT` | `/api/memory/answers/{id}` | Edit a learned answer's text |
 | `DELETE` | `/api/memory/answers/{id}` | Delete a learned answer |
 | `GET` | `/api/memory/similar` | Semantic search over approved answers |
 | `WS` | `/ws/{session_id}` | Real-time field classification / answer generation / fill confirmation |
+
+---
+
+## Resume Import
+
+Instead of typing every profile field by hand, upload a resume (Profile section →
+"Import from resume"):
+
+1. The file (`.pdf` or `.txt`/`.md`) is uploaded to the backend, which extracts its
+   raw text (`backend/resume_parser.py`) — no LLM call yet.
+2. The extension sends that text to your configured LLM provider (BYOK, same as
+   answer generation) asking it to pull out first/last name, email, phone,
+   city/state/country, LinkedIn/GitHub/portfolio, education, experience, and skills
+   as JSON.
+3. Every extracted field is shown for review — checked/unchecked, editable — before
+   anything is saved. Nothing is written to your profile until you click "Apply
+   Selected". Fields the resume didn't mention are left blank and unchecked.
+
+Not extracted from a resume (not something a resume reliably states, or sensitive):
+gender, date of birth, work authorization, visa status, willing-to-relocate — those
+stay manually entered. Scanned/image-only PDFs won't extract text (no OCR); a plain
+text export of the resume works if that happens.
 
 ---
 
@@ -383,6 +409,10 @@ cd extension && npm run build
   no description — generation degrades gracefully to title/company only.
 - The memory management screen is intentionally minimal — list/edit/delete, no
   search, tagging, or bulk actions.
+- Resume import supports `.pdf`/`.txt`/`.md` only (no `.docx`), has no OCR for
+  scanned/image PDFs, and needs an LLM provider configured (it's a BYOK LLM call,
+  same as answer generation) — a resume upload with no provider configured will
+  extract the raw text fine but fail at the field-extraction step.
 - Extension unit tests (vitest) cover the pure logic in `shared/config.ts` and
   `llm/client.ts`, plus the DOM logic in `content/index.ts` (stable field ids, exact-
   match-only field lookup, select/checkbox filling) via a test-only escape hatch —
