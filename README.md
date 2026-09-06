@@ -433,6 +433,25 @@ What's actually true about Snag today, for anyone citing it in pilot/marketing m
   work incidentally, but nothing is tailored to Naukri/Shine/etc.).
 - No encryption at rest for local data (see Security above).
 
+### vs. other AI job-application copilots
+
+Competitor column is per each product's own marketing pages (not independently
+re-verified here — treat as "reportedly," not confirmed fact):
+
+| | Snag | Simplify Copilot | Teal | Jobright | LazyApply | JobCopilot | AIApply |
+|---|---|---|---|---|---|---|---|
+| Learns from your approved answers | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ (claimed) | ❌ |
+| Resume → profile import | ✅ | partial | ✅ | partial | ✅ | ✅ | ✅ |
+| Runs locally (Ollama) / BYOK | ✅ | ❌ cloud only | ❌ cloud only | ❌ cloud only | ❌ cloud only | ❌ cloud only | ❌ cloud only |
+| Auto-submits applications | ❌ never | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ (credits) |
+| Open source | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Pricing | free (BYOK) | free + add-ons | free / ~$13/wk | free / paid | $99–999/yr | ~$28–32/mo | free tier / credits |
+
+Snag's actual differentiators, not claims: it's the only one here with an
+approved-answer memory loop that's been traced through the code (retrieval →
+generation → review → confirmed-fill → save), the only one that can run fully
+local end-to-end (Ollama), and the only one that's open source.
+
 ---
 
 ## Known Limitations
