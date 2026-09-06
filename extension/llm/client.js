@@ -1,7 +1,7 @@
 import { ollamaGenerate, ollamaGenerateStream } from "./ollama.js";
 import { openaiGenerate, openaiGenerateStream } from "./openai.js";
 import { anthropicGenerate, anthropicGenerateStream } from "./anthropic.js";
-function resolveModel(settings) {
+export function resolveModel(settings) {
     if (settings.model)
         return settings.model;
     if (settings.provider === "ollama")
@@ -13,7 +13,7 @@ function resolveModel(settings) {
     };
     return defaults[settings.provider] || "";
 }
-function resolveBaseUrl(settings) {
+export function resolveBaseUrl(settings) {
     if (settings.provider === "openai-compatible" && settings.baseUrl) {
         return settings.baseUrl.replace(/\/$/, "");
     }

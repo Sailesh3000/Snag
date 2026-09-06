@@ -9,7 +9,7 @@ export interface LLMStreamCallbacks {
   onError: (error: string) => void;
 }
 
-function resolveModel(settings: ExtensionSettings): string {
+export function resolveModel(settings: ExtensionSettings): string {
   if (settings.model) return settings.model;
   if (settings.provider === "ollama") return settings.ollamaModel || "qwen3:8b";
   const defaults: Record<string, string> = {
@@ -20,7 +20,7 @@ function resolveModel(settings: ExtensionSettings): string {
   return defaults[settings.provider] || "";
 }
 
-function resolveBaseUrl(settings: ExtensionSettings): string {
+export function resolveBaseUrl(settings: ExtensionSettings): string {
   if (settings.provider === "openai-compatible" && settings.baseUrl) {
     return settings.baseUrl.replace(/\/$/, "");
   }

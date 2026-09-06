@@ -63,7 +63,6 @@ Snag/
 │   ├── app.py                  # FastAPI entry point
 │   ├── config.py               # Pydantic settings
 │   ├── answer_service.py       # Builds the prompt/context sent to the extension's LLM call
-│   ├── orchestrator.py         # Strands multi-agent graph (legacy, not on the live path)
 │   ├── llm_providers/
 │   │   └── provider_router.py  # Ollama/OpenAI/Anthropic/Groq
 │   ├── memory/
@@ -75,7 +74,6 @@ Snag/
 │   │   ├── answer_routes.py    # POST /api/answer/generate
 │   │   ├── profile_routes.py   # Profile CRUD
 │   │   └── memory_routes.py    # Memory retrieval
-│   ├── agents/                 # Strands agent graph (legacy, not on the live path)
 │   ├── prompts/                # Question-type templates
 │   ├── tests/                  # pytest suite for the learning loop
 │   └── requirements.txt
@@ -282,6 +280,11 @@ python -m pytest -q
 Tests run against an isolated temp SQLite file and a fast deterministic stand-in for
 the embedding model — no model download or GPU needed to run them.
 
+```bash
+# Extension unit tests (vitest) — the pure, chrome-independent logic
+cd extension && npm install && npm test
+```
+
 ## Development
 
 ```bash
@@ -296,6 +299,9 @@ python -c "from backend.app import app; print('OK')"
 
 # Backend tests
 python -m pytest -q
+
+# Extension tests
+cd extension && npm test
 
 # Build UI only
 cd ui && npm run build
@@ -319,11 +325,12 @@ cd extension && npm run build
   scrape (common ATS containers, falling back to the page's meta description),
   truncated to a few thousand characters. Sites with unusual layouts may still yield
   no description — generation degrades gracefully to title/company only.
-- No automated tests for the extension/content-script layer (JS/TS) yet; the pytest
-  suite covers the backend learning loop end-to-end.
-- `backend/orchestrator.py` and `backend/agents/` are a pre-refactor Strands
-  multi-agent design, superseded by the direct WebSocket handlers in `backend/api/ws.py`
-  and `backend/answer_service.py`. Left in place but unused; candidate for removal.
+- Extension unit tests (vitest) cover the pure, chrome-independent logic
+  (`shared/config.ts`, `llm/client.ts`'s model/base-URL resolution). The DOM-heavy
+  content script (`content/index.ts`) is not unit tested: it's injected via
+  `chrome.scripting.executeScript` as a classic (non-module) script, so it
+  deliberately has zero imports — extracting its helpers into an importable
+  module isn't safe without changing how it's loaded.
 
 ---
 

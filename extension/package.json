@@ -4,10 +4,12 @@
   "private": true,
   "scripts": {
     "build": "tsc && cp src/content/styles.css content/styles.css",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "test": "vitest run"
   },
   "devDependencies": {
+    "@types/chrome": "^0.0.280",
     "typescript": "^5.7.0",
-    "@types/chrome": "^0.0.280"
+    "vitest": "^2.1.9"
   }
 }

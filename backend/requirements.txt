@@ -6,8 +6,6 @@ pydantic==2.10.4
 pydantic-settings==2.7.0
 aiofiles==24.1.0
 python-multipart==0.0.20
-strands-agents>=1.0.0
-strands-agents-tools>=0.2.0
 sentence-transformers>=3.0.0
 numpy>=1.26.0
 
