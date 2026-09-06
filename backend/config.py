@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     auth_token: str = ""
     auth_token_path: str = "data/auth_token.txt"
 
+    # Feedback (Sidebar "Feedback" button) is emailed via SMTP — nothing is
+    # sent anywhere unless smtp_username/smtp_password are configured (in a
+    # local, gitignored .env — see README). Defaults are Gmail's SMTP-over-SSL
+    # settings; any SMTP provider works by overriding smtp_host/smtp_port.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    feedback_to_email: str = "chandrasailesh30@gmail.com"
+
     model_config = {"env_prefix": "SNAG_", "env_file": ".env"}
 
 

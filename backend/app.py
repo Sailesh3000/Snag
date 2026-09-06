@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.answer_routes import router as answer_router
+from backend.api.feedback_routes import router as feedback_router
 from backend.api.memory_routes import router as memory_router
 from backend.api.profile_routes import router as profile_router
 from backend.api.routes import router
@@ -53,6 +54,13 @@ async def lifespan(_app: FastAPI):
 
     logger.info(f"{settings.app_name} v{settings.app_version} starting")
     logger.info(f"Ollama URL: {settings.ollama_url}")
+
+    from backend.feedback_service import is_configured as feedback_is_configured
+    if feedback_is_configured():
+        logger.info(f"Feedback email: configured, sends to {settings.feedback_to_email}")
+    else:
+        logger.info("Feedback email: not configured (set SNAG_SMTP_USERNAME/SNAG_SMTP_PASSWORD in .env)")
+
     logger.warning("=" * 64)
     logger.warning("Snag auth token (paste into the extension's Settings page):")
     logger.warning(f"  {settings.auth_token}")
@@ -79,6 +87,7 @@ app.include_router(router)
 app.include_router(profile_router)
 app.include_router(memory_router)
 app.include_router(answer_router)
+app.include_router(feedback_router)
 app.include_router(ws_router)
 
 

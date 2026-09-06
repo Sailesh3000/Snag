@@ -67,6 +67,7 @@ Snag/
 │   ├── auth.py                 # Per-installation token check (REST + WebSocket)
 │   ├── resume_parser.py        # Extracts raw text from an uploaded .pdf/.txt resume
 │   ├── resume_service.py       # Builds the resume -> profile-fields extraction prompt
+│   ├── feedback_service.py     # Emails Sidebar feedback submissions over SMTP
 │   ├── memory/
 │   │   ├── sqlite_store.py     # SQLite DB wrapper
 │   │   ├── memory_service.py   # Semantic search (numpy)
@@ -222,7 +223,32 @@ browser, with the user's own key — the backend never sees it).
 | `PUT` | `/api/memory/answers/{id}` | Edit a learned answer's text |
 | `DELETE` | `/api/memory/answers/{id}` | Delete a learned answer |
 | `GET` | `/api/memory/similar` | Semantic search over approved answers |
+| `POST` | `/api/feedback` | Send a Sidebar feedback submission by email (see Feedback below) |
 | `WS` | `/ws/{session_id}` | Real-time field classification / answer generation / fill confirmation |
+
+---
+
+## Feedback
+
+The Sidebar's "Feedback" button sends its submission by email via SMTP
+(`backend/feedback_service.py`) — nothing is sent anywhere until you configure a
+sending account. Add a local `.env` file at the repo root (already gitignored,
+never committed):
+
+```bash
+SNAG_SMTP_USERNAME=your-sending-account@gmail.com
+SNAG_SMTP_PASSWORD=your-16-char-gmail-app-password
+```
+
+Generate the app password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+(requires 2-Step Verification on that Google account) — never use your real
+account password here. Any SMTP provider works, not just Gmail: override
+`SNAG_SMTP_HOST`/`SNAG_SMTP_PORT` too if you're not using Gmail's SMTP-over-SSL
+(`smtp.gmail.com:465`, the default). The destination address defaults to
+`chandrasailesh30@gmail.com`; override with `SNAG_FEEDBACK_TO_EMAIL`.
+
+Until configured, submitting feedback returns a clear "not configured" error
+instead of a fake success — the backend logs whether it's configured at startup.
 
 ---
 

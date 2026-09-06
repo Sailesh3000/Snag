@@ -1,5 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+
+const DEFAULT_API_BASE = "http://127.0.0.1:8765/api";
 
 interface FeedbackModalProps {
   onClose: () => void;
@@ -11,6 +13,21 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
+  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (typeof chrome !== "undefined" && chrome.storage) {
+      chrome.storage.local.get("settings", (data: Record<string, unknown>) => {
+        const s = data?.settings as Record<string, string> | undefined;
+        setApiBase(s?.backendUrl
+          ? s.backendUrl.replace(/^ws/, "http").replace(/\/$/, "") + "/api"
+          : DEFAULT_API_BASE);
+        setAuthHeaders(s?.authToken ? { Authorization: `Bearer ${s.authToken}` } : {});
+      });
+    }
+  }, []);
 
   const FEEDBACK_TYPES = [
     { value: "general", label: "General Feedback" },
@@ -22,19 +39,24 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
   const handleSubmit = useCallback(async () => {
     if (!message.trim()) return;
     setSending(true);
+    setError(null);
     try {
-      await fetch("https://api.snag.io/feedback", {
+      const res = await fetch(`${apiBase}/feedback`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ type, message: message.trim(), email: email.trim() || undefined, source: "extension", version: "0.2.0" }),
-      }).catch(() => {});
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Failed (${res.status})`);
+      }
       setSubmitted(true);
-    } catch {
-      setSubmitted(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSending(false);
     }
-  }, [type, message, email]);
+  }, [type, message, email, apiBase, authHeaders]);
 
   return (
     <AnimatePresence>
@@ -128,6 +150,12 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
                     className="w-full bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-1.5 text-[11px] text-gray-200 outline-none focus:border-accent/30 placeholder:text-gray-600"
                   />
                 </div>
+
+                {error && (
+                  <div className="px-2.5 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
+                    <p className="text-[10px] text-red-400">{error}</p>
+                  </div>
+                )}
 
                 <div className="flex justify-end gap-2 pt-1">
                   <button
