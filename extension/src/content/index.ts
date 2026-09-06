@@ -313,6 +313,54 @@ function findField(selector: string, label?: string): HTMLElement | null {
   return null;
 }
 
+const TRUTHY_VALUES = new Set(["true", "yes", "y", "1", "on", "checked", "agree", "i agree"]);
+const FALSY_VALUES = new Set(["false", "no", "n", "0", "off", "unchecked", "not checked", ""]);
+
+function isTruthyValue(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (FALSY_VALUES.has(v)) return false;
+  if (TRUTHY_VALUES.has(v)) return true;
+  // Any other non-empty text (e.g. the option's own label) is treated as "select this one".
+  return v.length > 0;
+}
+
+function setCheckedState(el: HTMLInputElement, checked: boolean): void {
+  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set;
+  if (nativeSetter) {
+    nativeSetter.call(el, checked);
+  } else {
+    el.checked = checked;
+  }
+  // Setting .checked on a radio input natively unchecks its sibling radios
+  // in the same name/form group, so no extra bookkeeping is needed for groups.
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  el.dispatchEvent(new Event("click", { bubbles: true }));
+}
+
+function selectOption(el: HTMLSelectElement, value: string): boolean {
+  const target = value.trim().toLowerCase();
+  if (!target) return false;
+  const options = Array.from(el.options);
+  const match =
+    options.find((o) => o.value.trim().toLowerCase() === target || o.text.trim().toLowerCase() === target) ||
+    options.find((o) => {
+      const text = o.text.trim().toLowerCase();
+      return text.length > 0 && (text.includes(target) || target.includes(text));
+    });
+  if (!match) return false;
+
+  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+  if (nativeSetter) {
+    nativeSetter.call(el, match.value);
+  } else {
+    el.value = match.value;
+  }
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
 function applyFill(selector: string, value: string, highlightColor = "#6366f1", label?: string): boolean {
   try {
     const el = findField(selector, label);
@@ -321,7 +369,13 @@ function applyFill(selector: string, value: string, highlightColor = "#6366f1", 
     el.focus();
     el.scrollIntoView({ behavior: "smooth", block: "center" });
 
-    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+    const inputType = el.tagName === "INPUT" ? (el as HTMLInputElement).type : "";
+
+    if (el.tagName === "SELECT") {
+      if (!selectOption(el as HTMLSelectElement, value)) return false;
+    } else if (inputType === "checkbox" || inputType === "radio") {
+      setCheckedState(el as HTMLInputElement, isTruthyValue(value));
+    } else if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
       const nativeSetter = Object.getOwnPropertyDescriptor(
         el.tagName === "INPUT" ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype,
         "value"
@@ -462,6 +516,45 @@ window.addEventListener("message", (event) => {
   }
 });
 
+const JOB_DESCRIPTION_SELECTORS = [
+  // Greenhouse
+  "#content .job__description", "#content", ".job__description",
+  // Lever
+  ".posting-description", "[data-qa='job-description']",
+  // Workday
+  '[data-automation-id="jobPostingDescription"]',
+  // Ashby
+  ".ashby-job-posting-page-container", "[class*='ashby'][class*='description']",
+  // SmartRecruiters / Breezy / generic
+  ".job-sections", ".position-description", "#job-description",
+  // Generic fallbacks
+  "[class*='job-description']", "[class*='jobDescription']", "[id*='job-description']",
+  "main article", "main",
+];
+
+const MAX_JOB_DESCRIPTION_LENGTH = 4000;
+
+function extractJobDescription(): string | undefined {
+  for (const sel of JOB_DESCRIPTION_SELECTORS) {
+    const el = document.querySelector<HTMLElement>(sel);
+    const text = el?.textContent?.replace(/\s+/g, " ").trim();
+    // A real job description is reasonably long prose; short matches are
+    // usually just a heading or nav element that happened to match a selector.
+    if (text && text.length > 200) {
+      return text.slice(0, MAX_JOB_DESCRIPTION_LENGTH);
+    }
+  }
+
+  const metaDescription = document
+    .querySelector<HTMLMetaElement>('meta[name="description"], meta[property="og:description"]')
+    ?.content?.trim();
+  if (metaDescription && metaDescription.length > 100) {
+    return metaDescription.slice(0, MAX_JOB_DESCRIPTION_LENGTH);
+  }
+
+  return undefined;
+}
+
 function sendPageUpdate() {
   const fields = extractFormFields();
 
@@ -498,6 +591,8 @@ function sendPageUpdate() {
     }
   }
 
+  const jobDescription = extractJobDescription();
+
   chrome.storage.sync.get("settings", (data) => {
     const s = data?.settings || {};
     const finalJobTitle = jobTitle || s.defaultRole || null;
@@ -510,6 +605,7 @@ function sendPageUpdate() {
         fields,
         jobTitle: finalJobTitle,
         company: finalCompany,
+        jobDescription,
       },
     });
   });

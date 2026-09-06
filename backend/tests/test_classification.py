@@ -19,6 +19,13 @@ def test_classifies_select_dropdown():
 def test_classifies_checkbox():
     result = classify_field_heuristic("I agree to the terms", None, "checkbox")
     assert result["category"] == "checkbox"
+    assert result["subcategory"] == "checkbox"
+
+
+def test_classifies_radio():
+    result = classify_field_heuristic("Yes", None, "radio")
+    assert result["category"] == "checkbox"
+    assert result["subcategory"] == "radio"
 
 
 def test_classifies_file_upload():

@@ -308,11 +308,17 @@ cd extension && npm run build
 
 ## Known Limitations
 
-- Form filling reliably handles `<input>`/`<textarea>`/contenteditable fields. `<select>`
-  dropdowns, radio groups, and checkboxes are classified correctly but not yet filled
-  with full fidelity on every site.
-- Job context passed to answer generation is currently limited to a best-effort page
-  title/company scrape — no job description text is extracted yet.
+- Form filling handles `<input>`/`<textarea>`/contenteditable, `<select>` dropdowns
+  (matched by option value or visible text), and individual checkbox/radio inputs
+  (matched against yes/no-style values or the option's own label). A **radio/checkbox
+  group** (e.g. a multi-choice question rendered as several radio inputs) is still
+  extracted as separate individual fields rather than one grouped question — Snag can
+  fill a specific option once it knows which one, but doesn't yet reason about
+  "which of these N options answers this question" as a single decision.
+- Job context passed to answer generation includes a best-effort job description
+  scrape (common ATS containers, falling back to the page's meta description),
+  truncated to a few thousand characters. Sites with unusual layouts may still yield
+  no description — generation degrades gracefully to title/company only.
 - No automated tests for the extension/content-script layer (JS/TS) yet; the pytest
   suite covers the backend learning loop end-to-end.
 - `backend/orchestrator.py` and `backend/agents/` are a pre-refactor Strands

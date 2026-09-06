@@ -38,6 +38,22 @@ def test_build_prompt_includes_profile_and_job_context():
     assert "Data Engineer" in prompt
 
 
+def test_build_prompt_truncates_long_job_description():
+    from backend.answer_service import MAX_JOB_DESCRIPTION_CHARS
+
+    huge_description = "x" * (MAX_JOB_DESCRIPTION_CHARS + 500)
+    prompt, _ = build_prompt(
+        question="Tell me about yourself",
+        profile={},
+        memories=[],
+        job_description=huge_description,
+        company="Acme",
+        role="Engineer",
+    )
+    assert "x" * (MAX_JOB_DESCRIPTION_CHARS + 500) not in prompt
+    assert "x" * MAX_JOB_DESCRIPTION_CHARS in prompt
+
+
 def test_build_prompt_without_job_description_uses_fallback_not_blank():
     prompt, _ = build_prompt(
         question="Tell me about yourself",

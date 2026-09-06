@@ -37,6 +37,7 @@ class Session:
     url: str = ""
     company: str | None = None
     role: str | None = None
+    job_description: str | None = None
     fields: list[FieldInfo] = field(default_factory=list)
     classifications: list[Classification] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

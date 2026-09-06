@@ -151,6 +151,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                 session.url = payload.get("url", "")
                 session.company = payload.get("company")
                 session.role = payload.get("jobTitle")
+                session.job_description = payload.get("jobDescription")
                 fields = [
                     FieldInfo(
                         field_id=f.get("id", ""),
@@ -228,7 +229,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                     question=payload.get("question", ""),
                     company=payload.get("company", "") or (session.company or ""),
                     role=payload.get("role", "") or (session.role or ""),
-                    job_description=payload.get("jobDescription", ""),
+                    job_description=payload.get("jobDescription", "") or (session.job_description or ""),
                     session_id=session_id,
                 )
                 await manager.send(session_id, {

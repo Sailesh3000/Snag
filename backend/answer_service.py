@@ -26,6 +26,9 @@ def detect_question_type(question: str) -> str:
     return "general"
 
 
+MAX_JOB_DESCRIPTION_CHARS = 3000
+
+
 def build_prompt(question: str, profile: dict, memories: list[dict], job_description: str, company: str, role: str) -> tuple[str, str]:
     qtype = detect_question_type(question)
     template = QUESTION_TEMPLATES.get(qtype, QUESTION_TEMPLATES["general"])
@@ -33,6 +36,7 @@ def build_prompt(question: str, profile: dict, memories: list[dict], job_descrip
     profile_str = json.dumps(profile, indent=2)
     skills = profile.get("skills", "")
     memories_str = json.dumps(memories, indent=2) if memories else "No past answers available."
+    job_description = (job_description or "").strip()[:MAX_JOB_DESCRIPTION_CHARS]
 
     prompt = template.format(
         question=question,

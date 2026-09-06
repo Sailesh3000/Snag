@@ -70,7 +70,10 @@ def classify_field_heuristic(label: str, placeholder: str | None, field_type: st
         return {"category": "select", "confidence": 0.85, "label": label}
 
     if field_type == "checkbox":
-        return {"category": "checkbox", "confidence": 0.95, "label": label}
+        return {"category": "checkbox", "subcategory": "checkbox", "confidence": 0.95, "label": label}
+
+    if field_type == "radio":
+        return {"category": "checkbox", "subcategory": "radio", "confidence": 0.9, "label": label}
 
     salary_range_patterns = ["salary range", "salary and currency", "expected salary", "salary expectation", "compensation expected", "pay expectation"]
     if any(p in combined for p in salary_range_patterns) and field_type in ("textarea", "text", "unknown", ""):
