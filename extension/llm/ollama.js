@@ -1,7 +1,9 @@
+import { LLM_TIMEOUT_MS } from "./constants.js";
 export async function ollamaGenerate(system, prompt, opts) {
     const r = await fetch(`${opts.baseUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
         body: JSON.stringify({
             model: opts.model,
             system,
@@ -26,6 +28,7 @@ export async function ollamaGenerateStream(system, prompt, opts, callbacks) {
     const r = await fetch(`${opts.baseUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
         body: JSON.stringify({
             model: opts.model,
             system,
@@ -64,8 +67,10 @@ export async function ollamaGenerateStream(system, prompt, opts, callbacks) {
                     const obj = JSON.parse(line);
                     if (obj.response)
                         callbacks.onChunk(obj.response);
-                    if (obj.done)
+                    if (obj.done) {
                         callbacks.onDone();
+                        return;
+                    }
                 }
                 catch { }
             }
@@ -75,13 +80,15 @@ export async function ollamaGenerateStream(system, prompt, opts, callbacks) {
                 const obj = JSON.parse(buffer);
                 if (obj.response)
                     callbacks.onChunk(obj.response);
-                if (obj.done)
-                    callbacks.onDone();
             }
             catch { }
         }
+        // Stream ended (network EOF) without ever seeing "done": true — still
+        // resolve the UI instead of leaving it spinning forever.
+        callbacks.onDone();
     }
     catch (e) {
-        callbacks.onError(String(e));
+        const timedOut = e instanceof DOMException && e.name === "TimeoutError";
+        callbacks.onError(timedOut ? `Ollama request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
     }
 }

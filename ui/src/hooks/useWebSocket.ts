@@ -37,15 +37,17 @@ export function useWebSocket(): UseWebSocketReturn {
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const [messages, setMessages] = useState<WebSocketMessage[]>([]);
   const [backendUrl, setBackendUrl] = useState(getBackendUrl);
+  const [authToken, setAuthToken] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.sync.get("settings", (data: Record<string, unknown>) => {
+      chrome.storage.local.get("settings", (data: Record<string, unknown>) => {
         const s = data?.settings as Record<string, string> | undefined;
         setBackendUrl(s?.backendUrl || DEFAULT_BACKEND_URL);
+        setAuthToken(s?.authToken || "");
       });
     }
   }, []);
@@ -71,7 +73,8 @@ export function useWebSocket(): UseWebSocketReturn {
       function connect() {
         const session = `ses_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const wsUrl = backendUrl.replace(/\/$/, "");
-        const ws = new WebSocket(`${wsUrl}/ws/${session}`);
+        const tokenParam = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
+        const ws = new WebSocket(`${wsUrl}/ws/${session}${tokenParam}`);
 
         ws.onopen = () => {
           retryCountRef.current = 0;
@@ -115,7 +118,7 @@ export function useWebSocket(): UseWebSocketReturn {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       wsRef.current?.close();
     };
-  }, [backendUrl]);
+  }, [backendUrl, authToken]);
 
   const send = useCallback((msg: object) => {
     if (isInIframe) {

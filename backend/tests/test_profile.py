@@ -4,12 +4,13 @@ from fastapi.testclient import TestClient
 
 from backend.api.profile_routes import router as profile_router
 from backend.memory.sqlite_store import sqlite_store
+from backend.tests.conftest import AUTH_HEADERS
 
 
 def make_client() -> TestClient:
     app = FastAPI()
     app.include_router(profile_router)
-    return TestClient(app)
+    return TestClient(app, headers=AUTH_HEADERS)
 
 
 def test_profile_starts_empty():

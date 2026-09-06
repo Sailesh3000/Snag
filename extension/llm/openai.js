@@ -1,3 +1,4 @@
+import { LLM_TIMEOUT_MS } from "./constants.js";
 export async function openaiGenerate(system, prompt, opts) {
     const r = await fetch(`${opts.baseUrl}/chat/completions`, {
         method: "POST",
@@ -5,6 +6,7 @@ export async function openaiGenerate(system, prompt, opts) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${opts.apiKey}`,
         },
+        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
         body: JSON.stringify({
             model: opts.model,
             messages: [
@@ -29,6 +31,7 @@ export async function openaiGenerateStream(system, prompt, opts, callbacks) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${opts.apiKey}`,
         },
+        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
         body: JSON.stringify({
             model: opts.model,
             messages: [
@@ -81,6 +84,7 @@ export async function openaiGenerateStream(system, prompt, opts, callbacks) {
         callbacks.onDone();
     }
     catch (e) {
-        callbacks.onError(String(e));
+        const timedOut = e instanceof DOMException && e.name === "TimeoutError";
+        callbacks.onError(timedOut ? `OpenAI request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
     }
 }

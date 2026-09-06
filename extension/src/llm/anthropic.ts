@@ -1,3 +1,5 @@
+import { LLM_TIMEOUT_MS } from "./constants.js";
+
 export interface AnthropicOptions {
   apiKey: string;
   model: string;
@@ -26,6 +28,7 @@ export async function anthropicGenerate(
       "x-api-key": opts.apiKey,
       "anthropic-version": ANTHROPIC_VERSION,
     },
+    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     body: JSON.stringify({
       model: opts.model,
       system,
@@ -53,6 +56,7 @@ export async function anthropicGenerateStream(
       "x-api-key": opts.apiKey,
       "anthropic-version": ANTHROPIC_VERSION,
     },
+    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     body: JSON.stringify({
       model: opts.model,
       system,
@@ -97,6 +101,7 @@ export async function anthropicGenerateStream(
     }
     callbacks.onDone();
   } catch (e) {
-    callbacks.onError(String(e));
+    const timedOut = e instanceof DOMException && e.name === "TimeoutError";
+    callbacks.onError(timedOut ? `Anthropic request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
   }
 }

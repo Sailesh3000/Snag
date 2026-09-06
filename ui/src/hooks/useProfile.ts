@@ -2,10 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 
 const DEFAULT_API_BASE = "http://127.0.0.1:8765/api";
 
-function getApiBase(): string {
-  return DEFAULT_API_BASE;
-}
-
 interface Profile {
   [key: string]: string;
 }
@@ -20,15 +16,17 @@ interface UseProfileReturn {
 export function useProfile(): UseProfileReturn {
   const [profile, setProfile] = useState<Profile>({});
   const [loading, setLoading] = useState(true);
-  const [apiBase, setApiBase] = useState(getApiBase);
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
+  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.sync.get("settings", (data: Record<string, unknown>) => {
+      chrome.storage.local.get("settings", (data: Record<string, unknown>) => {
         const s = data?.settings as Record<string, string> | undefined;
         setApiBase(s?.backendUrl
           ? s.backendUrl.replace(/^ws/, "http").replace(/\/$/, "") + "/api"
           : DEFAULT_API_BASE);
+        setAuthHeaders(s?.authToken ? { Authorization: `Bearer ${s.authToken}` } : {});
       });
     }
   }, []);
@@ -36,7 +34,7 @@ export function useProfile(): UseProfileReturn {
   const refresh = useCallback(async () => {
     if (!apiBase) return;
     try {
-      const res = await fetch(`${apiBase}/profile`);
+      const res = await fetch(`${apiBase}/profile`, { headers: authHeaders });
       if (res.ok) {
         setProfile(await res.json());
       }
@@ -45,7 +43,7 @@ export function useProfile(): UseProfileReturn {
     } finally {
       setLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, authHeaders]);
 
   useEffect(() => {
     refresh();
@@ -56,12 +54,13 @@ export function useProfile(): UseProfileReturn {
     try {
       await fetch(`${apiBase}/profile/${key}?value=${encodeURIComponent(value)}`, {
         method: "PUT",
+        headers: authHeaders,
       });
       setProfile((prev) => ({ ...prev, [key]: value }));
     } catch {
       // ignore
     }
-  }, [apiBase]);
+  }, [apiBase, authHeaders]);
 
   return { profile, loading, updateField, refresh };
 }

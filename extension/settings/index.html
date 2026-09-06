@@ -233,6 +233,24 @@
         <input type="text" id="backendUrl" placeholder="ws://127.0.0.1:8765" />
         <div class="hint">WebSocket URL for the backend server. For local: <code>ws://127.0.0.1:8765</code></div>
       </div>
+
+      <div class="field">
+        <label for="authToken">Backend Auth Token</label>
+        <div class="key-input-wrap">
+          <input type="password" id="authToken" placeholder="paste the token from the backend's startup log" autocomplete="off" />
+          <button class="toggle-visibility" id="toggleAuthVis">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          </button>
+        </div>
+        <div class="hint">
+          Required — the backend rejects any request without it. Find it in <code>logs/snag.log</code>
+          (or the console) the first time you start the backend, or in <code>data/auth_token.txt</code>.
+          Stored locally in this browser profile only (not synced to your Google account).
+        </div>
+      </div>
     </div>
 
     <div class="section">
@@ -245,6 +263,15 @@
         <label for="defaultRole">Default Role</label>
         <input type="text" id="defaultRole" placeholder="e.g., Software Engineer" />
       </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Debugging</div>
+      <div class="field" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="debugLogging" style="width:auto;" />
+        <label for="debugLogging" style="margin-bottom:0;">Verbose console logging</label>
+      </div>
+      <div class="hint">Logs detected fields to the page's DevTools console on every scan. Off by default.</div>
     </div>
 
     <div id="status" class="status"></div>

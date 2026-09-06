@@ -18,10 +18,10 @@ flowchart LR
     style D fill:#8b5cf6,color:#fff
 ```
 
-**Chrome Extension** — Detects form fields, injects sidebar, fills answers
-**FastAPI Backend** — Classifies fields, generates answers via LLM, stores memory
-**LLM Provider** — Ollama (local), OpenAI, Anthropic, Groq, or OpenAI-compatible
-**SQLite** — Profile data, session history, saved answers with embeddings
+**Chrome Extension** — Detects form fields, injects sidebar, calls the LLM directly (BYOK), fills answers
+**FastAPI Backend** — Classifies fields, builds the prompt/context, stores memory. Binds to `127.0.0.1` only and requires a per-installation auth token on every request (see Security below) — it never calls an LLM or sees your API key itself
+**LLM Provider** — Ollama (local), OpenAI, Anthropic, Groq, or OpenAI-compatible — called from the extension, not the backend
+**SQLite** — Profile data, session history, saved answers with embeddings — local, unencrypted (see Security)
 
 ---
 
@@ -49,9 +49,10 @@ flowchart LR
 4. **User Clicks Question** — Click any open-ended question in the sidebar
 5. **Generate Answer** — LLM generates a tailored draft using your profile + past answers
 6. **Review** — Accept, Edit (then accept), Regenerate, or Skip
-7. **Fill & Learn** — Accepting fills the field and stores the final answer as memory, so a similar question on a future application — even for a different company — can be recognized and adapted
+7. **Fill & Confirm** — Accepting asks the content script to fill the field, then waits for it to confirm the DOM write actually succeeded before showing "Filled & Saved" — a stale selector or a field the page removed shows **Couldn't fill this field** with Retry/Edit/Skip/Fill-manually instead of a false success
+8. **Learn** — Only once that fill is confirmed is the final answer stored as memory, so a similar question on a future application — even for a different company — can be recognized and adapted
 
-Only an answer you actually accept (or edit-then-accept) is ever stored as memory. Regenerating or skipping never touches memory, and re-accepting the same question updates its existing memory entry instead of creating a duplicate.
+Regenerating or skipping never touches memory. Re-accepting the same question updates its existing memory entry instead of creating a duplicate. Sensitive profile fields (work authorization, visa status, gender, date of birth) are never auto-filled even when Snag has a confident value for them — they're surfaced as a reviewable suggestion through the same Accept/Edit/Skip flow.
 
 ---
 
@@ -63,8 +64,7 @@ Snag/
 │   ├── app.py                  # FastAPI entry point
 │   ├── config.py               # Pydantic settings
 │   ├── answer_service.py       # Builds the prompt/context sent to the extension's LLM call
-│   ├── llm_providers/
-│   │   └── provider_router.py  # Ollama/OpenAI/Anthropic/Groq
+│   ├── auth.py                 # Per-installation token check (REST + WebSocket)
 │   ├── memory/
 │   │   ├── sqlite_store.py     # SQLite DB wrapper
 │   │   ├── memory_service.py   # Semantic search (numpy)
@@ -94,7 +94,8 @@ Snag/
 │   │   │   ├── StatusBadge.tsx # Live/Reconnecting/Offline
 │   │   │   ├── ProfileSettings.tsx
 │   │   │   ├── FeedbackModal.tsx
-│   │   │   ├── AnswerCards.tsx
+│   │   │   ├── AnswerCards.tsx  # Accept/Edit/Regenerate/Skip + fill-confirmation states
+│   │   │   ├── MemoryManager.tsx # View/edit/delete learned answers
 │   │   │   └── ...
 │   │   └── hooks/
 │   │       ├── useWebSocket.ts
@@ -169,10 +170,19 @@ failure (5s delay), and writes to `logs/service_stdout.log` / `logs/service_stde
 3. Click "Load unpacked" → select the `extension/` folder
 4. Click the Snag icon on any page to toggle the sidebar
 
-### Configure Your LLM Provider
+### Configure Your LLM Provider & Pair with the Backend
 
 1. Right-click the Snag icon → "Options"
-2. Select your provider:
+2. **Backend Auth Token (required)** — the backend refuses every request without
+   this. The first time it starts, it prints a token to `logs/snag.log` and the
+   console:
+   ```
+   Snag auth token (paste into the extension's Settings page):
+     <your-token>
+   ```
+   It's also saved to `data/auth_token.txt`. Paste it into the "Backend Auth Token"
+   field and Save — you only need to do this once per install.
+3. Select your provider:
    - **Ollama** (local, free) — requires Ollama running with a model pulled
    - **OpenAI** — requires API key from platform.openai.com
    - **Anthropic** — requires API key from console.anthropic.com
@@ -191,26 +201,24 @@ Backend runs on `http://localhost:8765`. Load the extension separately.
 
 ## API Endpoints
 
+All endpoints except `/health` and `/api/health` require `Authorization: Bearer <token>`
+(REST) or `?token=<token>` (WebSocket) — see Security below. The backend never calls
+an LLM itself; `/api/answer/prepare` returns the assembled prompt/context for the
+**extension** to send to whichever provider the user configured (BYOK, from the
+browser, with the user's own key — the backend never sees it).
+
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Health check (no auth — used by the extension's health-ping) |
 | `GET` | `/api/profile` | Get profile fields |
 | `PUT` | `/api/profile/{key}` | Update a profile field |
-| `POST` | `/api/answer/generate` | Generate answer (accepts `X-Provider`, `X-API-Key` headers) |
-| `WS` | `/ws/{session_id}` | Real-time communication |
-
-### Answer Generation Headers
-
-When calling `/api/answer/generate`, pass provider config in headers:
-
-```
-X-Provider: openai
-X-API-Key: sk-...
-X-Model: gpt-4o-mini
-X-Base-URL: https://api.openai.com/v1
-```
-
-For Ollama (default), no headers needed.
+| `POST` | `/api/profile/resume/upload` | Upload a resume (stored under a generated filename, never the client's) |
+| `POST` | `/api/answer/prepare` | Build the prompt/context for a question (used by the WS flow; also available over REST) |
+| `GET` | `/api/memory/answers` | List the 50 most recent approved answers |
+| `PUT` | `/api/memory/answers/{id}` | Edit a learned answer's text |
+| `DELETE` | `/api/memory/answers/{id}` | Delete a learned answer |
+| `GET` | `/api/memory/similar` | Semantic search over approved answers |
+| `WS` | `/ws/{session_id}` | Real-time field classification / answer generation / fill confirmation |
 
 ---
 
@@ -243,16 +251,58 @@ For Ollama (default), no headers needed.
 
 ---
 
+## Security
+
+Snag has no user accounts, so it relies on two boundaries instead:
+
+- **Backend binds to `127.0.0.1` only** (`backend/config.py`) — never reachable from
+  the LAN or internet, only from processes on this machine.
+- **Per-installation auth token** (`backend/auth.py`) — loopback binding alone doesn't
+  stop *another page* open in the same browser from calling the backend (the browser
+  itself lives on that loopback interface), so every REST/WebSocket request must carry
+  a random token generated on first run and persisted to `data/auth_token.txt`. You
+  paste it into the extension's Settings page once; it's then read by the
+  service-worker/background context only (never by page-level content scripts or the
+  pages you visit) and sent as `Authorization: Bearer <token>` / `?token=`. CORS is
+  left permissive — it is **not** the access-control mechanism here, the token is.
+- **Resume uploads** are stored under a generated filename inside `data/resumes/`; the
+  client-supplied filename is never used to build the on-disk path (only its
+  extension is kept, sanitized), so a crafted filename can't write outside that
+  directory.
+- **Sensitive profile fields** (work authorization, visa status, gender, date of
+  birth) are never auto-filled — they go through the same reviewable Accept/Edit/Skip
+  flow as a generated answer, even though Snag has a directly usable profile value.
+- **Not implemented: encryption at rest.** `data/snag.db` (profile, resume paths,
+  approved-answer history) and `data/auth_token.txt` are plain, unencrypted files.
+  Anyone with filesystem access to this machine/account can read them. If that's not
+  an acceptable risk for your machine, don't run Snag there yet.
+- **API keys** (BYOK) and the auth token live in `chrome.storage.local` (not `.sync`
+  — nothing here is synced to your Google account or another device). They're read
+  only by the extension's own background/options/sidebar contexts, never by page
+  content scripts or the pages you visit.
+
+---
+
 ## Reliability
 
 Built to run unattended as a persistent local tool:
 
 - **SQLite WAL mode** — concurrent readers + one writer with a 5s busy timeout (no "database is locked")
-- **Structured LLM errors** — retries with exponential backoff (1s, 2s) on timeouts/connect/5xx, then returns `{"error": true, "code": "LLM_TIMEOUT" | "LLM_UNREACHABLE" | "LLM_HTTP_ERROR" | "LLM_ERROR", "message": "..."}`; all provider calls time out at 60s
+- **LLM calls have a timeout and a single retry** — the extension calls the LLM
+  provider directly (not the backend), each call is capped at 45s
+  (`extension/src/llm/constants.ts`) via `AbortSignal.timeout`, and a transient
+  network/timeout failure gets exactly one retry with a 1s backoff — never an
+  unbounded retry loop. A generation that somehow still doesn't resolve within 100s
+  (e.g. the WebSocket itself is down) is surfaced as a UI error instead of spinning
+  forever.
 - **Startup preflight** — `start.py` verifies the port is free and warns (non-fatal) if Ollama is unreachable before launching
 - **WebSocket reconnect** — the sidebar backs off exponentially (1s → 30s cap) and shows `Live` / `Reconnecting` / `Offline`
 - **Extension health ping** — the service worker pings `/health` every 30s and broadcasts `backend:status` to the sidebar
 - **Windows service** — `setup_service.ps1` registers the backend under NSSM with auto-start and restart-on-failure
+- **Fill confirmation** — accepting an answer doesn't report/save success until the
+  content script confirms the DOM write actually happened; a stale selector or a
+  field the page removed surfaces as a clear failure with Retry/Edit/Skip/Fill-manually,
+  never a false "Filled & Saved".
 
 ---
 
@@ -314,6 +364,8 @@ cd extension && npm run build
 
 ## Known Limitations
 
+- No encryption at rest for the local database, resume files, or the auth token file
+  — see Security above. Anyone with access to this machine/OS account can read them.
 - Form filling handles `<input>`/`<textarea>`/contenteditable, `<select>` dropdowns
   (matched by option value or visible text), and individual checkbox/radio inputs
   (matched against yes/no-style values or the option's own label). A **radio/checkbox
@@ -321,16 +373,23 @@ cd extension && npm run build
   extracted as separate individual fields rather than one grouped question — Snag can
   fill a specific option once it knows which one, but doesn't yet reason about
   "which of these N options answers this question" as a single decision.
+- The exact-label fallback match (used only when a field's own selector goes stale)
+  requires the label to be unique on the page; an ambiguous or missing match is
+  reported as a failure rather than guessed — by design, but it does mean a page with
+  several genuinely identically-labeled fields needs its selectors to stay valid.
 - Job context passed to answer generation includes a best-effort job description
   scrape (common ATS containers, falling back to the page's meta description),
   truncated to a few thousand characters. Sites with unusual layouts may still yield
   no description — generation degrades gracefully to title/company only.
-- Extension unit tests (vitest) cover the pure, chrome-independent logic
-  (`shared/config.ts`, `llm/client.ts`'s model/base-URL resolution). The DOM-heavy
-  content script (`content/index.ts`) is not unit tested: it's injected via
-  `chrome.scripting.executeScript` as a classic (non-module) script, so it
-  deliberately has zero imports — extracting its helpers into an importable
-  module isn't safe without changing how it's loaded.
+- The memory management screen is intentionally minimal — list/edit/delete, no
+  search, tagging, or bulk actions.
+- Extension unit tests (vitest) cover the pure logic in `shared/config.ts` and
+  `llm/client.ts`, plus the DOM logic in `content/index.ts` (stable field ids, exact-
+  match-only field lookup, select/checkbox filling) via a test-only escape hatch —
+  see the `__SNAG_TEST__` block at the bottom of that file. It's still not a full
+  end-to-end browser test; the sidebar's React components and the WS message
+  contract between background/content/backend are exercised by the backend's WS
+  tests (`backend/tests/test_fill_flow.py`) and manual testing, not automated.
 
 ---
 

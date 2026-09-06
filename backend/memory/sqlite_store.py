@@ -172,6 +172,19 @@ class SQLiteStore:
             )
         self._conn.commit()
 
+    def update_answer_text(self, answer_id: int, final_answer: str) -> bool:
+        cursor = self._conn.execute(
+            "UPDATE answers SET final_answer = ?, updated_at = datetime('now') WHERE id = ?",
+            (final_answer, answer_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_answer(self, answer_id: int) -> bool:
+        cursor = self._conn.execute("DELETE FROM answers WHERE id = ?", (answer_id,))
+        self._conn.commit()
+        return cursor.rowcount > 0
+
     def close(self):
         if self._conn:
             self._conn.close()

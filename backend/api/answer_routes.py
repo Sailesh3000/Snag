@@ -1,11 +1,12 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend.answer_service import prepare_context
+from backend.auth import require_auth
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/answer")
+router = APIRouter(prefix="/api/answer", dependencies=[Depends(require_auth)])
 
 
 @router.post("/prepare")

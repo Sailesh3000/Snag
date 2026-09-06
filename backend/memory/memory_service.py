@@ -36,6 +36,15 @@ async def save_answer(
     logger.info(f"Saved memory: q={question[:50]}...")
 
 
+async def update_answer(answer_id: int, final_answer: str) -> bool:
+    """Edit a stored answer's text in place (Memory management screen).
+
+    The question is unchanged, so its embedding stays valid — only the
+    answer text and updated_at move.
+    """
+    return sqlite_store.update_answer_text(answer_id, final_answer)
+
+
 # Same-company/role matches are ranked slightly higher (they're more likely to be
 # directly reusable) but a cross-company match still wins on strong semantic
 # similarity — this is what lets a previously-approved "why this company" answer

@@ -8,7 +8,7 @@ interface TabSession {
 
 const tabSessions = new Map<number, TabSession>();
 const activeTabs = new Set<number>();
-const pendingContexts = new Map<string, { tabId: number; company: string; role: string; question: string }>();
+const pendingContexts = new Map<string, { tabId: number; company: string; role: string; question: string; fieldId: string }>();
 
 async function pingBackendHealth() {
   const settings = await getSettings();
@@ -38,7 +38,12 @@ async function createSession(tabId: number): Promise<TabSession> {
   const settings = await getSettings();
   const baseUrl = getBackendWsUrl(settings);
   const sessionId = `ses_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  const ws = new WebSocket(`${baseUrl}/ws/${sessionId}`);
+  // The browser WebSocket API can't set custom headers, so the auth token
+  // (backend/auth.py) travels as a query param instead. This only leaves the
+  // service-worker/background context, which page-level content scripts and
+  // arbitrary web pages never see.
+  const tokenParam = settings.authToken ? `?token=${encodeURIComponent(settings.authToken)}` : "";
+  const ws = new WebSocket(`${baseUrl}/ws/${sessionId}${tokenParam}`);
 
   ws.onopen = () => {
     console.log(`[Snag] WS connected: ${sessionId}`);
@@ -92,7 +97,7 @@ async function callLLMDirectly(
   tabId: number,
   sessionId: string,
   context: Record<string, unknown>,
-  original: { company: string; role: string; question: string },
+  original: { company: string; role: string; question: string; fieldId: string },
 ) {
   const settings = await getSettings();
   const systemPrompt = context.systemPrompt as string;
@@ -106,7 +111,7 @@ async function callLLMDirectly(
         fullText += chunk;
         chrome.tabs.sendMessage(tabId, {
           type: "answer:stream",
-          payload: { chunk, partial: fullText },
+          payload: { fieldId: original.fieldId, chunk, partial: fullText },
         }).catch(() => {});
       },
       onDone: () => {
@@ -117,6 +122,7 @@ async function callLLMDirectly(
         chrome.tabs.sendMessage(tabId, {
           type: "answer:draft",
           payload: {
+            fieldId: original.fieldId,
             question: original.question,
             draft: fullText,
             error: null,
@@ -134,6 +140,7 @@ async function callLLMDirectly(
         chrome.tabs.sendMessage(tabId, {
           type: "answer:draft",
           payload: {
+            fieldId: original.fieldId,
             question: original.question,
             draft: "",
             error: `LLM generation failed: ${error}`,
@@ -154,6 +161,7 @@ async function callLLMDirectly(
       chrome.tabs.sendMessage(tabId, {
         type: "answer:draft",
         payload: {
+          fieldId: original.fieldId,
           question: original.question,
           draft: result,
           error: null,
@@ -169,6 +177,7 @@ async function callLLMDirectly(
       chrome.tabs.sendMessage(tabId, {
         type: "answer:draft",
         payload: {
+          fieldId: original.fieldId,
           question: original.question,
           draft: "",
           error: `LLM generation failed: ${e2}`,
@@ -202,6 +211,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           company: payload.company || "",
           role: payload.role || "",
           question: payload.question || "",
+          fieldId: payload.fieldId || "",
         });
         s.ws.addEventListener("open", () => {
           s.ws.send(JSON.stringify(message));
@@ -216,6 +226,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       company: payload.company || "",
       role: payload.role || "",
       question: payload.question || "",
+      fieldId: payload.fieldId || "",
     });
     sendToBackend(tabId, message);
     return;

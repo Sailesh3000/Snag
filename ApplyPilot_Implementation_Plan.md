@@ -386,10 +386,13 @@ Design
 
 # Security
 
--   Runs locally only
+-   Runs locally only (backend bound to 127.0.0.1) with a per-installation auth
+    token required on every request — see SPECS.md §6 and the README's Security
+    section for the actual, current model
 -   No cloud APIs by default
 -   Explicit approval before filling
--   Encrypted local profile
+-   Local profile storage is **not encrypted** (this bullet originally said it was;
+    corrected — see README Known Limitations)
 -   Never auto-submit applications
 
 ------------------------------------------------------------------------

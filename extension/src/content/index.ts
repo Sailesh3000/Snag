@@ -211,9 +211,10 @@ function extractFormFields(): FormField[] {
 
     if (normalizedType === "hidden" || normalizedType === "submit" || normalizedType === "button") return;
 
+    const selector = buildSelector(el);
     fields.push({
-      id: el.id || `field_${index}`,
-      selector: buildSelector(el),
+      id: el.id || stableIdFromSelector(selector),
+      selector,
       label,
       placeholder: placeholder || null,
       type: normalizedType,
@@ -225,6 +226,21 @@ function extractFormFields(): FormField[] {
   });
 
   return fields;
+}
+
+// Deterministic ID derived from the built selector (which already encodes
+// tag/classes/nth-of-type path) so two fields that happen to share a visible
+// label — "Additional comments" appearing twice, say — still get distinct,
+// stable identities across the whole generate -> draft -> fill pipeline,
+// instead of colliding on their label text or on a position-based index that
+// shifts whenever unrelated elements are added/removed earlier in the DOM.
+function stableIdFromSelector(selector: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < selector.length; i++) {
+    hash ^= selector.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `f_${(hash >>> 0).toString(36)}`;
 }
 
 function buildSelector(el: Element): string {
@@ -301,16 +317,36 @@ function injectSidebar() {
   setTimeout(() => { toggle.style.display = "flex"; }, 500);
 }
 
-function findField(selector: string, label?: string): HTMLElement | null {
-  let el = document.querySelector<HTMLElement>(selector);
-  if (el) return el;
-  if (!label) return null;
-  const all = document.querySelectorAll<HTMLElement>("input, textarea, select, [role=textbox], [contenteditable=true]");
-  for (const candidate of all) {
-    const candidateLabel = extractLabel(candidate);
-    if (candidateLabel.toLowerCase().includes(label.toLowerCase())) return candidate;
-  }
-  return null;
+type FindFieldResult =
+  | { el: HTMLElement; reason?: undefined }
+  | { el: null; reason: "not_found" | "ambiguous" };
+
+function normalizeLabelForMatch(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Matching priority: (1) the selector captured at classification time — the
+// common case, and correct even when two fields share a label, since the
+// selector already encodes DOM position; (2) if that selector goes stale
+// (SPA re-render), an EXACT normalized label match, but only when it
+// uniquely identifies one field. We deliberately do NOT fall back to fuzzy
+// substring matching ("Name" matching "First Name"/"Last Name"/"Company
+// Name") — a wrong-field fill that looks successful is worse than a fill
+// that visibly fails and asks the user to do it manually.
+function findField(selector: string, label?: string): FindFieldResult {
+  const bySelector = selector ? document.querySelector<HTMLElement>(selector) : null;
+  if (bySelector) return { el: bySelector };
+  if (!label) return { el: null, reason: "not_found" };
+
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>("input, textarea, select, [role=textbox], [contenteditable=true]")
+  );
+  const target = normalizeLabelForMatch(label);
+  const exactMatches = candidates.filter((c) => normalizeLabelForMatch(extractLabel(c)) === target);
+
+  if (exactMatches.length === 1) return { el: exactMatches[0] };
+  if (exactMatches.length > 1) return { el: null, reason: "ambiguous" };
+  return { el: null, reason: "not_found" };
 }
 
 const TRUTHY_VALUES = new Set(["true", "yes", "y", "1", "on", "checked", "agree", "i agree"]);
@@ -361,10 +397,18 @@ function selectOption(el: HTMLSelectElement, value: string): boolean {
   return true;
 }
 
-function applyFill(selector: string, value: string, highlightColor = "#6366f1", label?: string): boolean {
+interface ApplyFillResult {
+  success: boolean;
+  reason?: string;
+}
+
+function applyFill(selector: string, value: string, highlightColor = "#6366f1", label?: string): ApplyFillResult {
   try {
-    const el = findField(selector, label);
-    if (!el) return false;
+    const found = findField(selector, label);
+    if (!found.el) {
+      return { success: false, reason: found.reason ?? "not_found" };
+    }
+    const el = found.el;
 
     el.focus();
     el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -372,7 +416,9 @@ function applyFill(selector: string, value: string, highlightColor = "#6366f1", 
     const inputType = el.tagName === "INPUT" ? (el as HTMLInputElement).type : "";
 
     if (el.tagName === "SELECT") {
-      if (!selectOption(el as HTMLSelectElement, value)) return false;
+      if (!selectOption(el as HTMLSelectElement, value)) {
+        return { success: false, reason: "no_matching_option" };
+      }
     } else if (inputType === "checkbox" || inputType === "radio") {
       setCheckedState(el as HTMLInputElement, isTruthyValue(value));
     } else if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
@@ -426,9 +472,9 @@ function applyFill(selector: string, value: string, highlightColor = "#6366f1", 
       el.style.outline = "";
       el.style.outlineOffset = "";
     }, 3000);
-    return true;
-  } catch {
-    return false;
+    return { success: true };
+  } catch (e) {
+    return { success: false, reason: e instanceof Error ? e.message : "unknown_error" };
   }
 }
 
@@ -472,8 +518,8 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (!fills) return;
     isFilling = true;
     for (const fill of fills) {
-      const ok = applyFill(fill.selector, fill.value, "#6366f1", fill.key);
-      chrome.runtime.sendMessage({ type: "fill:execute", payload: { ...fill, success: ok } });
+      const result = applyFill(fill.selector, fill.value, "#6366f1", fill.key);
+      chrome.runtime.sendMessage({ type: "fill:execute", payload: { ...fill, success: result.success, reason: result.reason } });
     }
     setTimeout(() => { isFilling = false; }, 500);
   }
@@ -484,22 +530,33 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (selector) {
       highlightField(selector, "#f59e0b");
     } else if (label) {
-      const el = findField("", label);
-      if (el) {
-        el.style.transition = "box-shadow 0.3s ease, outline 0.3s ease";
-        el.style.outline = "2px solid #f59e0b";
-        el.style.outlineOffset = "2px";
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      const found = findField("", label);
+      if (found.el) {
+        found.el.style.transition = "box-shadow 0.3s ease, outline 0.3s ease";
+        found.el.style.outline = "2px solid #f59e0b";
+        found.el.style.outlineOffset = "2px";
+        found.el.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
   }
 
-  if (msg.type === "fill:executed") {
+  // The backend's instruction to actually perform an accepted fill (sent in
+  // response to the sidebar's "fill:approve"). Named distinctly from
+  // "fill:executed" — that type is now reserved for the CONFIRMED result
+  // going back to the sidebar (see "fill:result" below), never a command.
+  if (msg.type === "fill:instruct") {
+    const requestId = payload.requestId as string | undefined;
     const selector = payload.selector as string;
     const value = payload.value as string;
     const label = payload.label as string | undefined;
     isFilling = true;
-    if (selector && value) applyFill(selector, value, "#10b981", label);
+    const result = value
+      ? applyFill(selector, value, "#10b981", label)
+      : { success: false, reason: "no_value" };
+    chrome.runtime.sendMessage({
+      type: "fill:result",
+      payload: { requestId, fieldId: payload.fieldId, success: result.success, reason: result.reason },
+    });
     setTimeout(() => { isFilling = false; }, 500);
   }
 
@@ -593,7 +650,7 @@ function sendPageUpdate() {
 
   const jobDescription = extractJobDescription();
 
-  chrome.storage.sync.get("settings", (data) => {
+  chrome.storage.local.get("settings", (data) => {
     const s = data?.settings || {};
     const finalJobTitle = jobTitle || s.defaultRole || null;
     const finalCompany = company || s.defaultCompany || null;
@@ -608,38 +665,19 @@ function sendPageUpdate() {
         jobDescription,
       },
     });
-  });
 
-  const capture = (obj: Record<string, unknown>, depth = 0) => {
-    if (depth > 2) return "...";
-    const items: string[] = [];
-    for (const k of Object.keys(obj).sort()) {
-      const v = obj[k];
-      if (typeof v === "string") {
-        items.push(`${k}:${JSON.stringify(v)}`);
-      } else if (typeof v === "number" || typeof v === "boolean") {
-        items.push(`${k}:${v}`);
-      } else if (Array.isArray(v) && v.length > 0) {
-        const first = v[0];
-        if (typeof first === "object" && first !== null) {
-          items.push(`${k}:[{...}]`);
-        } else if (typeof first === "string") {
-          items.push(`${k}:${first}`);
-        } else {
-          items.push(`${k}:[${v.length} items]`);
-        }
-      } else {
-        items.push(`${k}:...`);
-      }
+    // Off by default — a full field dump on every scan is noisy for pilot
+    // users who open DevTools, and fields can include sensitive labels.
+    // Enable via the extension's Settings page ("Debug logging").
+    if (s.debugLogging) {
+      console.log("[Snag] page:update", {
+        url: window.location.href,
+        fieldCount: fields.length,
+        jobTitle: finalJobTitle,
+        company: finalCompany,
+      });
     }
-    return `{${items.join(", ")}}`;
-  };
-
-  console.log(
-    `%c [Snag] WS Payload`,
-    "color:green;background:black;padding:2px;border-radius:3px;",
-    JSON.stringify(capture({ url: window.location.href, fields, jobTitle, company }), null, 2),
-  );
+  });
 }
 
 const isTopFrame = window.top === window.self;
@@ -653,7 +691,16 @@ function init() {
   mutationObserver = new MutationObserver(() => {
     if (!isFilling) debouncedSendPageUpdate();
   });
-  mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true });
+  mutationObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    // Narrow to attributes that actually change what Snag would extract —
+    // busy SPA forms (Workday et al.) mutate style/data-*/aria-live
+    // attributes constantly, and reacting to those wastes callback cycles
+    // for no classification-relevant change.
+    attributeFilter: ["value", "checked", "selected", "disabled", "required", "class", "placeholder"],
+  });
 }
 
 function cleanup() {
@@ -679,4 +726,30 @@ function cleanup() {
   }
   lastFieldCount = 0;
   lastSentAt = 0;
+}
+
+// Test-only escape hatch. This content script is injected via
+// chrome.scripting.executeScript as a CLASSIC (non-module) script, so it
+// cannot use `import`/`export` — that's a hard platform constraint, not a
+// choice, and it's why these internals can't just be imported into a vitest
+// file the normal way. Exposing them here (a plain `if`, not an
+// import/export statement) lets tests exercise the REAL shipped functions —
+// via `globalThis.__SNAG_TEST__ = true` before dynamically importing this
+// file — instead of a hand-duplicated copy that could drift from what's
+// actually running. In production `__SNAG_TEST__` is never set, so this
+// block never runs.
+if ((globalThis as any).__SNAG_TEST__) {
+  (globalThis as any).__snagInternals = {
+    isGenericPlaceholder,
+    isLabelHumanReadable,
+    extractLabel,
+    buildSelector,
+    stableIdFromSelector,
+    isTruthyValue,
+    selectOption,
+    setCheckedState,
+    findField,
+    applyFill,
+    extractFormFields,
+  };
 }

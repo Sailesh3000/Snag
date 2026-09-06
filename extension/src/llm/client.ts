@@ -31,6 +31,21 @@ export function resolveBaseUrl(settings: ExtensionSettings): string {
   return urls[settings.provider] || "";
 }
 
+// A single retry (not a loop) for the non-streaming path, only for
+// transient failures (timeout / network error) — a bad API key or a 4xx
+// response won't be retried since retrying can't fix those.
+async function withSingleRetry(fn: () => Promise<string>): Promise<string> {
+  try {
+    return await fn();
+  } catch (e) {
+    const isTimeout = e instanceof DOMException && e.name === "TimeoutError";
+    const isNetworkError = e instanceof TypeError;
+    if (!isTimeout && !isNetworkError) throw e;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return await fn();
+  }
+}
+
 export async function llmGenerate(
   system: string,
   prompt: string,
@@ -38,25 +53,27 @@ export async function llmGenerate(
 ): Promise<string> {
   const model = resolveModel(settings);
 
-  if (settings.provider === "ollama") {
-    return ollamaGenerate(system, prompt, {
-      baseUrl: settings.ollamaUrl || "http://127.0.0.1:11434",
-      model,
-    });
-  }
+  return withSingleRetry(() => {
+    if (settings.provider === "ollama") {
+      return ollamaGenerate(system, prompt, {
+        baseUrl: settings.ollamaUrl || "http://127.0.0.1:11434",
+        model,
+      });
+    }
 
-  if (settings.provider === "anthropic") {
-    return anthropicGenerate(system, prompt, {
+    if (settings.provider === "anthropic") {
+      return anthropicGenerate(system, prompt, {
+        apiKey: settings.apiKey,
+        model,
+      });
+    }
+
+    // OpenAI, Groq, OpenAI-compatible all use the same API format
+    return openaiGenerate(system, prompt, {
+      baseUrl: resolveBaseUrl(settings),
       apiKey: settings.apiKey,
       model,
     });
-  }
-
-  // OpenAI, Groq, OpenAI-compatible all use the same API format
-  return openaiGenerate(system, prompt, {
-    baseUrl: resolveBaseUrl(settings),
-    apiKey: settings.apiKey,
-    model,
   });
 }
 

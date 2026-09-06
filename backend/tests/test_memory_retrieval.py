@@ -108,3 +108,64 @@ async def test_embedding_failure_degrades_gracefully(monkeypatch):
     monkeypatch.setattr(memory_service, "generate_embedding", empty_embedding)
     results = await find_similar("Any question", top_k=3)
     assert results == []
+
+
+# --- Memory management screen (view/edit/delete learned answers) ---
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from backend.api.memory_routes import router as memory_router
+from backend.tests.conftest import AUTH_HEADERS
+
+
+def make_memory_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(memory_router)
+    return TestClient(app, headers=AUTH_HEADERS)
+
+
+@pytest.mark.asyncio
+async def test_memory_answers_list_includes_saved_entry():
+    await save_answer(question="Why this role", final_answer="Original answer.", company="Acme", role="Engineer")
+    resp = make_memory_client().get("/api/memory/answers")
+    assert resp.status_code == 200
+    assert any(row["final_answer"] == "Original answer." for row in resp.json())
+
+
+@pytest.mark.asyncio
+async def test_memory_answer_can_be_edited():
+    await save_answer(question="Why this role", final_answer="Original answer.", company="Acme", role="Engineer")
+    row = sqlite_store._conn.execute(
+        "SELECT id FROM answers WHERE question = ?", ("Why this role",)
+    ).fetchone()
+
+    resp = make_memory_client().put(f"/api/memory/answers/{row['id']}", json={"final_answer": "Corrected answer."})
+    assert resp.status_code == 200
+
+    updated = sqlite_store._conn.execute("SELECT final_answer FROM answers WHERE id = ?", (row["id"],)).fetchone()
+    assert updated["final_answer"] == "Corrected answer."
+
+
+@pytest.mark.asyncio
+async def test_memory_answer_can_be_deleted():
+    await save_answer(question="Why this role", final_answer="Answer to delete.", company="Acme", role="Engineer")
+    row = sqlite_store._conn.execute(
+        "SELECT id FROM answers WHERE question = ?", ("Why this role",)
+    ).fetchone()
+
+    resp = make_memory_client().delete(f"/api/memory/answers/{row['id']}")
+    assert resp.status_code == 200
+
+    remaining = sqlite_store._conn.execute("SELECT id FROM answers WHERE id = ?", (row["id"],)).fetchone()
+    assert remaining is None
+
+
+def test_editing_nonexistent_answer_returns_404():
+    resp = make_memory_client().put("/api/memory/answers/999999", json={"final_answer": "x"})
+    assert resp.status_code == 404
+
+
+def test_deleting_nonexistent_answer_returns_404():
+    resp = make_memory_client().delete("/api/memory/answers/999999")
+    assert resp.status_code == 404

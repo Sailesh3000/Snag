@@ -1,3 +1,5 @@
+import { LLM_TIMEOUT_MS } from "./constants.js";
+
 export interface OpenAIOptions {
   baseUrl: string;
   apiKey: string;
@@ -24,6 +26,7 @@ export async function openaiGenerate(
       "Content-Type": "application/json",
       Authorization: `Bearer ${opts.apiKey}`,
     },
+    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     body: JSON.stringify({
       model: opts.model,
       messages: [
@@ -53,6 +56,7 @@ export async function openaiGenerateStream(
       "Content-Type": "application/json",
       Authorization: `Bearer ${opts.apiKey}`,
     },
+    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     body: JSON.stringify({
       model: opts.model,
       messages: [
@@ -100,6 +104,7 @@ export async function openaiGenerateStream(
     }
     callbacks.onDone();
   } catch (e) {
-    callbacks.onError(String(e));
+    const timedOut = e instanceof DOMException && e.name === "TimeoutError";
+    callbacks.onError(timedOut ? `OpenAI request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
   }
 }

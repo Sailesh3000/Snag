@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
+from backend.auth import require_auth
 from backend.memory.sqlite_store import sqlite_store
 
-router = APIRouter(prefix="/api/profile")
+router = APIRouter(prefix="/api/profile", dependencies=[Depends(require_auth)])
 
 PROFILE_FIELDS = [
     "first_name", "last_name", "name", "email", "phone",
@@ -40,19 +41,31 @@ async def delete_profile(key: str):
 
 @router.post("/resume/upload")
 async def upload_resume(file: UploadFile):
-    import aiofiles
+    import uuid
     from pathlib import Path
 
-    upload_dir = Path("data/resumes")
+    import aiofiles
+
+    from backend.config import settings
+
+    upload_dir = Path(settings.resume_upload_dir).resolve()
     upload_dir.mkdir(parents=True, exist_ok=True)
-    dest = upload_dir / file.filename
+
+    # Never trust the client-supplied filename for the on-disk path — take
+    # only its extension (sanitized) and generate the actual filename.
+    original_name = Path(file.filename or "resume").name or "resume"
+    suffix = "".join(c for c in Path(original_name).suffix if c.isalnum() or c == ".")[:10]
+    dest = (upload_dir / f"{uuid.uuid4().hex}{suffix}").resolve()
+
+    if upload_dir not in dest.parents:
+        raise HTTPException(400, "Invalid filename")
 
     async with aiofiles.open(str(dest), "wb") as f:
         content = await file.read()
         await f.write(content)
 
-    resume_id = sqlite_store.add_resume(file.filename, str(dest))
-    return {"id": resume_id, "name": file.filename, "path": str(dest)}
+    resume_id = sqlite_store.add_resume(original_name, str(dest))
+    return {"id": resume_id, "name": original_name, "path": str(dest)}
 
 
 @router.get("/resumes")

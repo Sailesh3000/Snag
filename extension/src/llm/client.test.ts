@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { resolveModel, resolveBaseUrl } from "./client.js";
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { resolveModel, resolveBaseUrl, llmGenerate } from "./client.js";
 import type { ExtensionSettings } from "../shared/config.js";
 
 function settings(overrides: Partial<ExtensionSettings> = {}): ExtensionSettings {
@@ -11,11 +11,18 @@ function settings(overrides: Partial<ExtensionSettings> = {}): ExtensionSettings
     ollamaUrl: "http://127.0.0.1:11434",
     ollamaModel: "qwen3:8b",
     backendUrl: "ws://127.0.0.1:8765",
+    authToken: "",
+    debugLogging: false,
     defaultCompany: "",
     defaultRole: "",
     ...overrides,
   };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("resolveModel", () => {
   it("prefers an explicit model over any provider default", () => {
@@ -48,5 +55,35 @@ describe("resolveBaseUrl", () => {
   it("returns empty string for ollama/anthropic (they don't use this base URL scheme)", () => {
     expect(resolveBaseUrl(settings({ provider: "ollama" }))).toBe("");
     expect(resolveBaseUrl(settings({ provider: "anthropic" }))).toBe("");
+  });
+});
+
+describe("llmGenerate retry", () => {
+  it("retries once on a transient network error and succeeds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("network error"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ response: "second try worked" }),
+      } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await llmGenerate("sys", "prompt", settings({ provider: "ollama" }));
+
+    expect(result).toBe("second try worked");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a non-transient error (e.g. HTTP error)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => "unauthorized",
+    } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(llmGenerate("sys", "prompt", settings({ provider: "ollama" }))).rejects.toThrow(/401/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

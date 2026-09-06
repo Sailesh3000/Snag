@@ -1,11 +1,12 @@
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useProvider } from "../hooks/useProvider";
 import FieldList, { type FieldClassification } from "./FieldList";
 import MemorySuggestions from "./MemorySuggestions";
-import AnswerCards, { type AnswerDraft } from "./AnswerCards";
+import AnswerCards, { type FieldAnswerState } from "./AnswerCards";
 import ProfileSettings from "./ProfileSettings";
+import MemoryManager from "./MemoryManager";
 import FeedbackModal from "./FeedbackModal";
 import StatusBadge from "./StatusBadge";
 import Section from "./Section";
@@ -25,22 +26,31 @@ interface Suggestion {
   }>;
 }
 
-type DraftEntry = {
-  question: string;
-  answer: AnswerDraft;
-  timestamp: number;
-};
+interface StaticSuggestion {
+  fieldId: string;
+  selector: string;
+  label: string;
+  value: string;
+  key: string;
+}
+
+// If the backend/LLM never responds at all (WS down, provider hung with no
+// timeout ever firing upstream), don't leave the UI spinning forever. This
+// is deliberately looser than the extension's own LLM_TIMEOUT_MS (45s) plus
+// its one retry, so it only fires when something upstream failed silently.
+const GENERATION_UI_TIMEOUT_MS = 100_000;
+
+function newRequestId(): string {
+  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export default function Sidebar() {
   const { connectionStatus, messages, send } = useWebSocket();
   const provider = useProvider();
-  const [selectedField, setSelectedField] = useState<FieldClassification | null>(null);
-  const [draftMap, setDraftMap] = useState<Map<string, DraftEntry>>(new Map());
-  const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [fieldAnswers, setFieldAnswers] = useState<Map<string, FieldAnswerState>>(new Map());
   const [showFeedback, setShowFeedback] = useState(false);
-  const [streamingText, setStreamingText] = useState("");
-  const [regeneratingQuestion, setRegeneratingQuestion] = useState<string | null>(null);
+  const [showMemoryManager, setShowMemoryManager] = useState(false);
+  const timeoutHandles = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const statusPayload = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -69,82 +79,276 @@ export default function Sidebar() {
     return [];
   }, [messages]);
 
-  const classifiedFieldMap = useMemo(() => {
-    const map = new Map<string, { selector: string; fieldId: string }>();
-    for (const c of classifications) {
-      map.set(c.label, { selector: (c as any).selector || "", fieldId: c.fieldId });
-    }
-    return map;
-  }, [classifications]);
-
   const longAnswerFields = useMemo(
     () => classifications.filter((f) => f.category === "long_answer"),
     [classifications]
   );
 
-  const draftAnswers = useMemo(() => {
-    const entries = Array.from(draftMap.values());
-    entries.sort((a, b) => b.timestamp - a.timestamp);
-    return entries.map((e) => e.answer);
-  }, [draftMap]);
+  const answerList = useMemo(() => {
+    const entries = Array.from(fieldAnswers.values());
+    entries.sort((a, b) => b.updatedAt - a.updatedAt);
+    return entries;
+  }, [fieldAnswers]);
+
+  const clearFieldTimeout = useCallback((fieldId: string) => {
+    const handle = timeoutHandles.current.get(fieldId);
+    if (handle) {
+      clearTimeout(handle);
+      timeoutHandles.current.delete(fieldId);
+    }
+  }, []);
+
+  const armGenerationTimeout = useCallback((fieldId: string) => {
+    clearFieldTimeout(fieldId);
+    const handle = setTimeout(() => {
+      setFieldAnswers((prev) => {
+        const entry = prev.get(fieldId);
+        if (!entry || entry.status !== "generating") return prev;
+        const next = new Map(prev);
+        next.set(fieldId, { ...entry, status: "error", error: "Timed out waiting for a response. Check the backend and your LLM provider are running.", updatedAt: Date.now() });
+        return next;
+      });
+    }, GENERATION_UI_TIMEOUT_MS);
+    timeoutHandles.current.set(fieldId, handle);
+  }, [clearFieldTimeout]);
+
+  useEffect(() => {
+    return () => {
+      for (const handle of timeoutHandles.current.values()) clearTimeout(handle);
+    };
+  }, []);
+
+  // Sensitive static fields (work authorization, visa status, gender, DOB)
+  // arrive as reviewable suggestions rather than being auto-filled — they
+  // reuse the exact same Accept/Edit/Skip card as a generated answer.
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.type !== "static:suggestions") return;
+    const items = (last.payload?.suggestions as StaticSuggestion[]) || [];
+    if (items.length === 0) return;
+
+    setFieldAnswers((prev) => {
+      const next = new Map(prev);
+      for (const item of items) {
+        if (next.has(item.fieldId)) continue; // don't clobber an in-progress card
+        next.set(item.fieldId, {
+          fieldId: item.fieldId,
+          question: item.label,
+          selector: item.selector,
+          company: "",
+          role: "",
+          questionType: "profile_fact",
+          confidence: 0.99,
+          profileUsed: [item.key],
+          memoryCount: 0,
+          draft: item.value,
+          streamingText: "",
+          status: "ready",
+          source: "static_suggestion",
+          updatedAt: Date.now(),
+        });
+      }
+      return next;
+    });
+  }, [messages]);
 
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (!last) return;
 
     if (last.type === "answer:stream") {
-      setStreamingText(last.payload.partial as string || "");
+      const fieldId = last.payload.fieldId as string | undefined;
+      const partial = (last.payload.partial as string) || "";
+      if (!fieldId) return;
+      setFieldAnswers((prev) => {
+        const entry = prev.get(fieldId);
+        if (!entry) return prev;
+        const next = new Map(prev);
+        next.set(fieldId, { ...entry, streamingText: partial });
+        return next;
+      });
     }
 
     if (last.type === "answer:draft") {
-      setGenerating(false);
-      const result = last.payload as unknown as AnswerDraft;
-      setRegeneratingQuestion((prev) => (prev === result.question ? null : prev));
-      if (result.error) {
-        setGenerateError(result.error);
-        return;
-      }
-      if (result.draft) {
-        setDraftMap((prev) => {
-          const next = new Map(prev);
-          next.set(result.question, {
-            question: result.question,
-            answer: result,
-            timestamp: Date.now(),
+      const payload = last.payload as unknown as {
+        fieldId?: string; question: string; draft: string; error?: string | null;
+        questionType: string; company: string; role: string; confidence: number;
+        profileUsed: string[]; memoryCount: number;
+      };
+      const fieldId = payload.fieldId;
+      if (!fieldId) return;
+      clearFieldTimeout(fieldId);
+
+      setFieldAnswers((prev) => {
+        const entry = prev.get(fieldId);
+        const next = new Map(prev);
+        if (payload.error) {
+          next.set(fieldId, {
+            fieldId,
+            question: payload.question,
+            selector: entry?.selector || "",
+            company: payload.company || "",
+            role: payload.role || "",
+            questionType: payload.questionType || "general",
+            confidence: 0,
+            profileUsed: [],
+            memoryCount: 0,
+            draft: "",
+            streamingText: "",
+            status: "error",
+            error: payload.error,
+            source: "generated",
+            updatedAt: Date.now(),
           });
           return next;
+        }
+        next.set(fieldId, {
+          fieldId,
+          question: payload.question,
+          selector: entry?.selector || "",
+          company: payload.company || "",
+          role: payload.role || "",
+          questionType: payload.questionType || "general",
+          confidence: payload.confidence,
+          profileUsed: payload.profileUsed || [],
+          memoryCount: payload.memoryCount || 0,
+          draft: payload.draft,
+          streamingText: "",
+          status: "ready",
+          source: "generated",
+          updatedAt: Date.now(),
         });
-      }
+        return next;
+      });
     }
-  }, [messages]);
+
+    if (last.type === "fill:executed") {
+      const payload = last.payload as { fieldId?: string; success: boolean; reason?: string };
+      const fieldId = payload.fieldId;
+      if (!fieldId) return;
+      setFieldAnswers((prev) => {
+        const entry = prev.get(fieldId);
+        if (!entry) return prev;
+        const next = new Map(prev);
+        next.set(fieldId, payload.success
+          ? { ...entry, status: "filled", updatedAt: Date.now() }
+          : { ...entry, status: "fill_failed", fillFailReason: payload.reason, updatedAt: Date.now() });
+        return next;
+      });
+    }
+  }, [messages, clearFieldTimeout]);
 
   const handleGenerate = useCallback(
     (field: FieldClassification) => {
-      setSelectedField(field);
-      setGenerating(true);
-      setGenerateError(null);
-      setStreamingText("");
+      setFieldAnswers((prev) => {
+        const next = new Map(prev);
+        next.set(field.fieldId, {
+          fieldId: field.fieldId,
+          question: field.label,
+          selector: field.selector || "",
+          company: "",
+          role: "",
+          questionType: field.questionType || "general",
+          confidence: 0,
+          profileUsed: [],
+          memoryCount: 0,
+          draft: "",
+          streamingText: "",
+          status: "generating",
+          source: "generated",
+          updatedAt: Date.now(),
+        });
+        return next;
+      });
+      armGenerationTimeout(field.fieldId);
       send({
         type: "answer:generate",
         payload: {
+          fieldId: field.fieldId,
           question: field.label,
           questionType: field.questionType || "general",
         },
       });
     },
-    [send]
+    [send, armGenerationTimeout]
   );
 
   const handleRegenerate = useCallback(
-    (question: string) => {
-      setRegeneratingQuestion(question);
-      setGenerateError(null);
-      send({
-        type: "answer:generate",
-        payload: { question },
+    (fieldId: string, question: string) => {
+      setFieldAnswers((prev) => {
+        const entry = prev.get(fieldId);
+        if (!entry) return prev;
+        const next = new Map(prev);
+        next.set(fieldId, { ...entry, status: "generating", streamingText: "", updatedAt: Date.now() });
+        return next;
       });
+      armGenerationTimeout(fieldId);
+      send({ type: "answer:generate", payload: { fieldId, question } });
     },
-    [send]
+    [send, armGenerationTimeout]
+  );
+
+  const handleAccept = useCallback(
+    (fieldId: string, finalText: string, wasEdited: boolean) => {
+      const entry = fieldAnswers.get(fieldId);
+      if (!entry) return;
+      const requestId = newRequestId();
+
+      setFieldAnswers((prev) => {
+        const next = new Map(prev);
+        const current = prev.get(fieldId);
+        if (!current) return prev;
+        next.set(fieldId, { ...current, status: "filling", draft: finalText, updatedAt: Date.now() });
+        return next;
+      });
+
+      send({
+        type: "fill:preview",
+        payload: { value: finalText, question: entry.question, label: entry.question, selector: entry.selector, fieldId },
+      });
+      setTimeout(() => {
+        send({
+          type: "fill:approve",
+          payload: {
+            requestId,
+            value: finalText,
+            question: entry.question,
+            selector: entry.selector,
+            fieldId,
+            company: entry.company,
+            role: entry.role,
+            ...(wasEdited ? { original: entry.draft } : {}),
+          },
+        });
+      }, 300);
+    },
+    [fieldAnswers, send]
+  );
+
+  const handleSkip = useCallback(
+    (fieldId: string) => {
+      clearFieldTimeout(fieldId);
+      setFieldAnswers((prev) => {
+        const entry = prev.get(fieldId);
+        if (!entry) return prev;
+        const next = new Map(prev);
+        next.set(fieldId, { ...entry, status: "skipped", updatedAt: Date.now() });
+        return next;
+      });
+      send({ type: "fill:reject", payload: { fieldId } });
+    },
+    [send, clearFieldTimeout]
+  );
+
+  const handleFillManually = useCallback(
+    (fieldId: string) => {
+      const entry = fieldAnswers.get(fieldId);
+      if (entry) {
+        send({ type: "fill:preview", payload: { selector: entry.selector, label: entry.question, fieldId } });
+      }
+      handleSkip(fieldId);
+    },
+    [fieldAnswers, send, handleSkip]
   );
 
   return (
@@ -171,6 +375,15 @@ export default function Sidebar() {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setShowMemoryManager(true)}
+              className="w-5 h-5 flex items-center justify-center rounded-md hover:bg-white/[0.06] text-gray-500 hover:text-gray-300 transition-colors"
+              title="Manage learned answers"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+              </svg>
+            </button>
             <button
               onClick={() => { try { chrome.runtime.openOptionsPage(); } catch {} }}
               className="w-5 h-5 flex items-center justify-center rounded-md hover:bg-white/[0.06] text-gray-500 hover:text-gray-300 transition-colors"
@@ -216,37 +429,40 @@ export default function Sidebar() {
         <Section title="Questions" icon="help-circle" badge={longAnswerFields.length || undefined}>
           {longAnswerFields.length > 0 ? (
             <div className="space-y-1">
-              {longAnswerFields.map((f, i) => (
-                <motion.button
-                  key={f.fieldId}
-                  initial={{ opacity: 0, x: -4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.03 }}
-                  onClick={() => handleGenerate(f)}
-                  disabled={generating}
-                  className="w-full text-left px-2.5 py-2 rounded-lg bg-surface/40 border border-white/[0.03] hover:border-accent/20 hover:bg-accent/5 transition-all disabled:opacity-40 disabled:cursor-wait group"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="w-5 h-5 rounded-md bg-accent/10 flex items-center justify-center shrink-0 group-hover:bg-accent/20 transition-colors">
-                      {generating && selectedField?.fieldId === f.fieldId ? (
-                        <div className="w-2.5 h-2.5 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
-                      ) : (
-                        <svg className="w-2.5 h-2.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                        </svg>
+              {longAnswerFields.map((f, i) => {
+                const isGenerating = fieldAnswers.get(f.fieldId)?.status === "generating";
+                return (
+                  <motion.button
+                    key={f.fieldId}
+                    initial={{ opacity: 0, x: -4 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.03 }}
+                    onClick={() => handleGenerate(f)}
+                    disabled={isGenerating}
+                    className="w-full text-left px-2.5 py-2 rounded-lg bg-surface/40 border border-white/[0.03] hover:border-accent/20 hover:bg-accent/5 transition-all disabled:opacity-40 disabled:cursor-wait group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-md bg-accent/10 flex items-center justify-center shrink-0 group-hover:bg-accent/20 transition-colors">
+                        {isGenerating ? (
+                          <div className="w-2.5 h-2.5 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+                        ) : (
+                          <svg className="w-2.5 h-2.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                          </svg>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[11px] text-gray-300 truncate block group-hover:text-gray-100 transition-colors">
+                          {f.label}
+                        </span>
+                      </div>
+                      {f.questionType && (
+                        <span className="text-[8px] text-gray-600 font-mono shrink-0">{f.questionType}</span>
                       )}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[11px] text-gray-300 truncate block group-hover:text-gray-100 transition-colors">
-                        {f.label}
-                      </span>
-                    </div>
-                    {f.questionType && (
-                      <span className="text-[8px] text-gray-600 font-mono shrink-0">{f.questionType}</span>
-                    )}
-                  </div>
-                </motion.button>
-              ))}
+                  </motion.button>
+                );
+              })}
             </div>
           ) : (
             <div className="flex items-center gap-2 py-3 text-gray-600">
@@ -271,55 +487,24 @@ export default function Sidebar() {
           )}
         </Section>
 
-        <Section title="Answers" icon="file-text" badge={draftAnswers.length || undefined}>
+        <Section title="Answers" icon="file-text" badge={answerList.length || undefined}>
           <AnimatePresence>
-            {generateError && (
-              <motion.div
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="mb-2 px-2.5 py-2 rounded-lg bg-red-500/10 border border-red-500/20"
-              >
-                <p className="text-[10px] text-red-400 font-medium">{generateError}</p>
-              </motion.div>
-            )}
-            {draftAnswers.length > 0 ? (
+            {answerList.length > 0 ? (
               <AnswerCards
-                answers={draftAnswers}
-                send={send}
-                fieldMap={classifiedFieldMap}
+                answers={answerList}
+                onAccept={handleAccept}
+                onSkip={handleSkip}
+                onFillManually={handleFillManually}
                 onRegenerate={handleRegenerate}
-                regeneratingQuestion={regeneratingQuestion}
               />
-            ) : generating ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="space-y-2"
-              >
-                <div className="flex items-center gap-2.5 py-2">
-                  <div className="relative">
-                    <div className="w-5 h-5 border-2 border-accent/20 border-t-accent rounded-full animate-spin" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-gray-300 font-medium">Generating answer...</p>
-                    <p className="text-[9px] text-gray-600 mt-0.5">
-                      Using {provider.provider === "ollama" ? "local model" : provider.provider}
-                    </p>
-                  </div>
-                </div>
-                {streamingText && (
-                  <div className="px-2.5 py-2 rounded-lg bg-surface/60 border border-white/[0.03]">
-                    <p className="text-[10px] text-gray-300 whitespace-pre-wrap leading-relaxed">{streamingText}<span className="inline-block w-1 h-3 bg-accent animate-pulse ml-0.5" /></p>
-                  </div>
-                )}
-              </motion.div>
             ) : (
               <div className="flex items-center gap-2 py-3 text-gray-600">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                 </svg>
-                <span className="text-[11px]">Click a question above to generate</span>
+                <span className="text-[11px]">
+                  Click a question above to generate — using {provider.provider === "ollama" ? "local model" : provider.provider}
+                </span>
               </div>
             )}
           </AnimatePresence>
@@ -365,6 +550,7 @@ export default function Sidebar() {
       </footer>
 
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
+      {showMemoryManager && <MemoryManager onClose={() => setShowMemoryManager(false)} />}
     </motion.div>
   );
 }

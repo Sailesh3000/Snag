@@ -25,24 +25,17 @@
                       │
 ┌─────────────────────┼────────────────────────────────────────┐
 │              FastAPI Backend (Python)                        │
+│  Binds to 127.0.0.1 only; every request below requires a     │
+│  per-installation auth token (backend/auth.py) — see §6.     │
 │  ┌───────────────────────────────────────────────────────┐   │
-│  │  Strands Orchestrator                                │   │
-│  │  ┌──────────┐ ┌────────────┐ ┌──────────┐ ┌───────┐ │   │
-│  │  │ Page     │ │ Profile    │ │ Memory   │ │Answer │ │   │
-│  │  │ Agent    │ │ Agent      │ │ Agent    │ │Agent  │ │   │
-│  │  └──────────┘ └────────────┘ └──────────┘ └───────┘ │   │
+│  │  WebSocket handler (backend/api/ws.py)                │   │
+│  │  Field classification -> static autofill match ->     │   │
+│  │  memory retrieval -> prompt/context assembly ->        │   │
+│  │  fill-confirmation state machine -> save to memory     │   │
 │  └──────────────────────────────────────────────────────┘   │
 │         │                                                   │
-│  ┌──────▼──────────────────────────────────────────────┐    │
-│  │  LLM Provider Router                                │    │
-│  │  ┌─────────┐ ┌──────────┐ ┌──────┐ ┌───────────┐  │    │
-│  │  │ Ollama  │ │ OpenAI   │ │Groq  │ │ Anthropic │  │    │
-│  │  │ (local) │ │ GPT-4o-m │ │      │ │ Haiku     │  │    │
-│  │  └─────────┘ └──────────┘ └──────┘ └───────────┘  │    │
-│  └────────────────────────────────────────────────────┘    │
-│         │                                                   │
 │  ┌──────▼──────┐                                           │
-│  │  SQLite     │                                           │
+│  │  SQLite     │  (unencrypted — see §6)                   │
 │  │  (profile,  │                                           │
 │  │  sessions,  │                                           │
 │  │  answers,   │                                           │
@@ -50,6 +43,13 @@
 │  └─────────────┘                                           │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+Note: the backend never calls an LLM itself. `/api/answer/prepare` returns the
+assembled prompt/context; the **extension** calls whichever provider the user
+configured (BYOK), directly from the browser — see the LLM Provider block above.
+An earlier Strands-based multi-agent orchestrator (`backend/orchestrator.py`,
+`backend/agents/`) was removed after this refactor; it's no longer part of the
+live path.
 
 ---
 
@@ -93,15 +93,17 @@
 | **LLM Provider Router** | Abstract LLM calls across Ollama, OpenAI, Anthropic, Groq, OpenAI-compatible APIs. API key passed from frontend per-request. |
 | **Memory Service** | SQLite-based semantic search using sentence-transformers embeddings + numpy cosine similarity. |
 
-**API Endpoints:**
+**API Endpoints:** (all except `/health`/`/api/health` require the auth token — see §6)
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | Health check |
+| GET | `/health` | Health check (no auth) |
 | GET | `/api/profile` | Get profile fields |
 | PUT | `/api/profile/{key}` | Update profile field |
-| POST | `/api/answer/generate` | Generate answer (accepts X-Provider, X-API-Key headers) |
-| WS | `/ws/{session_id}` | Real-time bidirectional comm |
+| POST | `/api/profile/resume/upload` | Upload a resume (server generates the storage filename) |
+| POST | `/api/answer/prepare` | Build the prompt/context for a question (backend never calls the LLM) |
+| GET/PUT/DELETE | `/api/memory/answers[/{id}]` | List / edit / delete learned answers (memory management screen) |
+| WS | `/ws/{session_id}?token=...` | Real-time bidirectional comm |
 
 ### 2.3 LLM Providers
 
@@ -229,11 +231,21 @@ CREATE TABLE answers (
 
 ## 6. Security & Constraints
 
-- **BYO API Key**: Users provide their own API keys. Keys stored in `chrome.storage.sync` locally. Backend never stores API keys — they are sent per-request via headers.
+- **BYO API Key**: Users provide their own API keys. Keys stored in `chrome.storage.local` (not synced to the user's Google account). Backend never stores or sees API keys — the extension calls the LLM provider directly.
 - No cloud LLM calls unless user configures a cloud provider
 - User must explicitly approve each field fill (no auto-submit)
 - Extension only injects on supported job sites (click to activate)
-- Rate-limit WebSocket messages
+- **Backend auth**: binds to `127.0.0.1` only; every REST/WS request requires a
+  per-installation token (`backend/auth.py`, generated on first run, persisted to
+  `data/auth_token.txt`, pasted into the extension's Settings page once). This is
+  the actual access-control boundary — CORS is left permissive and is *not* relied
+  on for security, since loopback binding alone doesn't stop another page open in
+  the same browser from reaching the backend.
+- **Sensitive fields** (work authorization, visa status, gender, date of birth) are
+  never silently auto-filled — they're surfaced as a reviewable suggestion.
+- **Not implemented**: encryption at rest for `data/snag.db` or `data/auth_token.txt`
+  (both are plain files), and WebSocket message rate-limiting. Both are honest gaps,
+  not silent ones — see the README's Security/Known Limitations sections.
 - Minimal permissions: `activeTab`, `storage`, `scripting`, `alarms`; `host_permissions` limited to `http://127.0.0.1:8765/*`
 
 ## 7. Reliability & Always-On Operation
@@ -242,8 +254,9 @@ CREATE TABLE answers (
 |---|---|
 | Concurrent DB access | SQLite **WAL mode** + `busy_timeout=5000` on every connection |
 | Crash diagnostics | `logs/snag.log` via `RotatingFileHandler` (5MB × 5 backups, INFO) + console WARNING |
-| LLM outages | `call_with_retry()` in `provider_router.py` — 2 retries (1s, 2s backoff) on timeout/connect/5xx; all calls capped at 60s |
-| LLM failure UX | Structured `LLMError` → `{"error": true, "code", "message"}` for the frontend to display |
+| LLM outages | Extension-side (`extension/src/llm/*.ts`): every provider call capped at 45s via `AbortSignal.timeout`, one retry (1s backoff) on timeout/network error only |
+| LLM failure UX | `answer:draft` payload carries `error`; the Answers card shows it with Retry/Skip/Fill-manually — never a silent hang |
+| Fill confirmation | Accept doesn't report/save success until the content script confirms the DOM write; failure shows Retry/Edit/Skip/Fill-manually |
 | Startup safety | `start.py` preflight: hard-fails if the port is in use; warns (non-fatal) if Ollama is unreachable |
 | Backend goes down | Sidebar WebSocket reconnect with exponential backoff (1s → 30s cap), statuses `Live` / `Reconnecting` / `Offline` |
 | Silent backend death | Service worker pings `/health` every 30s (`alarms`), broadcasts `backend:status` to open sidebars |

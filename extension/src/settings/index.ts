@@ -6,6 +6,8 @@ interface Settings {
   ollamaUrl: string;
   ollamaModel: string;
   backendUrl: string;
+  authToken: string;
+  debugLogging: boolean;
   defaultCompany: string;
   defaultRole: string;
 }
@@ -18,6 +20,8 @@ const DEFAULTS: Settings = {
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen3:8b",
   backendUrl: "ws://127.0.0.1:8765",
+  authToken: "",
+  debugLogging: false,
   defaultCompany: "",
   defaultRole: "",
 };
@@ -66,6 +70,11 @@ function toggleKeyVisibility() {
   input.type = input.type === "password" ? "text" : "password";
 }
 
+function toggleAuthTokenVisibility() {
+  const input = inp("authToken");
+  input.type = input.type === "password" ? "text" : "password";
+}
+
 function updateProviderUI() {
   const provider = sel("provider").value;
   const needsKey = provider !== "ollama";
@@ -87,7 +96,9 @@ function updateProviderUI() {
 }
 
 async function loadSettings() {
-  const stored = await chrome.storage.sync.get("settings");
+  // chrome.storage.local (not .sync): this holds the backend auth token and
+  // the BYOK API key — neither should sync to the user's Google account.
+  const stored = await chrome.storage.local.get("settings");
   const s: Settings = { ...DEFAULTS, ...(stored.settings || {}) };
 
   sel("provider").value = s.provider;
@@ -97,6 +108,8 @@ async function loadSettings() {
   inp("ollamaUrl").value = s.ollamaUrl;
   inp("ollamaModel").value = s.ollamaModel;
   inp("backendUrl").value = s.backendUrl;
+  inp("authToken").value = s.authToken;
+  inp("debugLogging").checked = s.debugLogging;
   inp("defaultCompany").value = s.defaultCompany;
   inp("defaultRole").value = s.defaultRole;
 
@@ -112,11 +125,13 @@ async function saveSettings() {
     ollamaUrl: inp("ollamaUrl").value.trim() || DEFAULTS.ollamaUrl,
     ollamaModel: inp("ollamaModel").value.trim() || DEFAULTS.ollamaModel,
     backendUrl: inp("backendUrl").value.trim() || DEFAULTS.backendUrl,
+    authToken: inp("authToken").value.trim(),
+    debugLogging: inp("debugLogging").checked,
     defaultCompany: inp("defaultCompany").value.trim(),
     defaultRole: inp("defaultRole").value.trim(),
   };
 
-  await chrome.storage.sync.set({ settings });
+  await chrome.storage.local.set({ settings });
   showStatus("Settings saved!", "success");
 }
 
@@ -128,6 +143,8 @@ function resetDefaults() {
   inp("ollamaUrl").value = DEFAULTS.ollamaUrl;
   inp("ollamaModel").value = DEFAULTS.ollamaModel;
   inp("backendUrl").value = DEFAULTS.backendUrl;
+  inp("authToken").value = DEFAULTS.authToken;
+  inp("debugLogging").checked = DEFAULTS.debugLogging;
   inp("defaultCompany").value = DEFAULTS.defaultCompany;
   inp("defaultRole").value = DEFAULTS.defaultRole;
   updateProviderUI();
@@ -135,10 +152,12 @@ function resetDefaults() {
 }
 
 (window as any).toggleKeyVisibility = toggleKeyVisibility;
+(window as any).toggleAuthTokenVisibility = toggleAuthTokenVisibility;
 
 sel("provider").addEventListener("change", updateProviderUI);
 document.getElementById("saveBtn")!.addEventListener("click", saveSettings);
 document.getElementById("resetBtn")!.addEventListener("click", resetDefaults);
 document.getElementById("toggleVis")!.addEventListener("click", toggleKeyVisibility);
+document.getElementById("toggleAuthVis")!.addEventListener("click", toggleAuthTokenVisibility);
 
 loadSettings();

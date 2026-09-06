@@ -4,6 +4,7 @@ import {
   getBackendHttpUrl,
   getProviderBaseUrl,
   getDefaultModel,
+  getBackendAuthHeaders,
   type ExtensionSettings,
 } from "./config.js";
 
@@ -16,6 +17,8 @@ function settings(overrides: Partial<ExtensionSettings> = {}): ExtensionSettings
     ollamaUrl: "http://127.0.0.1:11434",
     ollamaModel: "qwen3:8b",
     backendUrl: "ws://127.0.0.1:8765",
+    authToken: "",
+    debugLogging: false,
     defaultCompany: "",
     defaultRole: "",
     ...overrides,
@@ -58,5 +61,17 @@ describe("getDefaultModel", () => {
 
   it("falls back to the provider's default model", () => {
     expect(getDefaultModel(settings({ provider: "anthropic" }))).toBe("claude-3-5-haiku-20241022");
+  });
+});
+
+describe("getBackendAuthHeaders", () => {
+  it("returns an empty object when no token is configured", () => {
+    expect(getBackendAuthHeaders(settings({ authToken: "" }))).toEqual({});
+  });
+
+  it("returns a Bearer Authorization header when a token is configured", () => {
+    expect(getBackendAuthHeaders(settings({ authToken: "abc123" }))).toEqual({
+      Authorization: "Bearer abc123",
+    });
   });
 });

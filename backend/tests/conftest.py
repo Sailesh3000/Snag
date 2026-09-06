@@ -19,11 +19,15 @@ import pytest
 
 _TMP_DIR = tempfile.mkdtemp(prefix="snag_test_")
 os.environ.setdefault("SNAG_SQLITE_PATH", str(Path(_TMP_DIR) / "test_snag.db"))
+os.environ.setdefault("SNAG_RESUME_UPLOAD_DIR", str(Path(_TMP_DIR) / "resumes"))
+os.environ.setdefault("SNAG_AUTH_TOKEN", "test-fixed-token-for-pytest")
 
 from backend.memory import memory_service  # noqa: E402
 from backend.memory.sqlite_store import sqlite_store  # noqa: E402
 
 EMBED_DIM = 64
+AUTH_TOKEN = "test-fixed-token-for-pytest"
+AUTH_HEADERS = {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
 
 def fake_embedding_vector(text: str) -> list[float]:

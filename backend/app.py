@@ -53,6 +53,11 @@ async def lifespan(_app: FastAPI):
 
     logger.info(f"{settings.app_name} v{settings.app_version} starting")
     logger.info(f"Ollama URL: {settings.ollama_url}")
+    logger.warning("=" * 64)
+    logger.warning("Snag auth token (paste into the extension's Settings page):")
+    logger.warning(f"  {settings.auth_token}")
+    logger.warning(f"Also saved to: {settings.auth_token_path}")
+    logger.warning("=" * 64)
     try:
         yield
     finally:

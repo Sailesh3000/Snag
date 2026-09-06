@@ -1,9 +1,11 @@
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from backend.answer_service import prepare_context, save_answer
+from backend.auth import require_ws_auth
 from backend.memory.memory_service import find_similar_for_fields
 from backend.memory.sqlite_store import sqlite_store
 from backend.session import Classification, FieldInfo, session_manager
@@ -26,10 +28,22 @@ STATIC_FIELD_KEYWORDS = {
     "linkedin": ["linkedin", "linked in"],
     "github": ["github", "git hub"],
     "portfolio": ["portfolio", "website", "url", "link"],
+    "gender": ["gender", "sex"],
+    "date_of_birth": ["date of birth", "dob", "birth date"],
+    "willing_to_relocate": ["relocate", "relocation", "willing to relocate"],
+    "work_authorization": ["work authorization", "authorized to work", "legally authorized to work", "eligible to work"],
+    "visa_status": ["visa status", "visa sponsorship", "require sponsorship", "need sponsorship"],
 }
 
+# Legally/personally sensitive fields are never silently auto-filled, even
+# though Snag has a direct, confident profile value for them. They're
+# surfaced as a reviewable suggestion (same Accept/Edit/Skip flow as a
+# generated answer) instead of being written into the DOM unattended.
+SENSITIVE_STATIC_KEYS = {"work_authorization", "visa_status", "gender", "date_of_birth"}
 
-def match_static_fields(fields: list[FieldInfo]) -> list[dict]:
+
+def match_static_fields(fields: list[FieldInfo]) -> tuple[list[dict], list[dict]]:
+    """Returns (auto_fills, sensitive_suggestions)."""
     profile = sqlite_store.get_profile()
     first_name = profile.get("first_name", "")
     last_name = profile.get("last_name", "")
@@ -52,24 +66,28 @@ def match_static_fields(fields: list[FieldInfo]) -> list[dict]:
     generic_labels = {"type here", "enter text", "please enter", "input", "text", "enter", "edit",
                       "answer", "your answer", "write here", "your response", ""}
 
-    fills = []
+    fills: list[dict] = []
+    sensitive: list[dict] = []
+
+    def _emit(field: FieldInfo, profile_key: str, val: str):
+        entry = {
+            "fieldId": field.field_id,
+            "selector": field.selector,
+            "label": field.label,
+            "value": val,
+            "key": profile_key,
+        }
+        (sensitive if profile_key in SENSITIVE_STATIC_KEYS else fills).append(entry)
+
     for field in fields:
         label_lower = (field.label or "").lower()
         matched = False
 
         for profile_key, keywords in STATIC_FIELD_KEYWORDS.items():
             if any(kw in label_lower for kw in keywords):
-                if profile_key in name_map:
-                    val = name_map[profile_key]
-                else:
-                    val = profile.get(profile_key)
+                val = name_map[profile_key] if profile_key in name_map else profile.get(profile_key)
                 if val:
-                    fills.append({
-                        "fieldId": field.field_id,
-                        "selector": field.selector,
-                        "value": val,
-                        "key": profile_key,
-                    })
+                    _emit(field, profile_key, val)
                 matched = True
                 break
 
@@ -83,14 +101,9 @@ def match_static_fields(fields: list[FieldInfo]) -> list[dict]:
             if profile_key:
                 val = profile.get(profile_key)
                 if val:
-                    fills.append({
-                        "fieldId": field.field_id,
-                        "selector": field.selector,
-                        "value": val,
-                        "key": profile_key,
-                    })
+                    _emit(field, profile_key, val)
 
-    return fills
+    return fills, sensitive
 
 
 def classify_fields(fields: list[FieldInfo]) -> list[Classification]:
@@ -128,9 +141,26 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Requests currently mid-flight between "user clicked Accept" and "content
+# script confirmed the DOM write succeeded" — save_answer() only runs once
+# that confirmation arrives, keyed by the requestId the sidebar generated.
+# Cleaned up on WS disconnect (_purge_pending_fills_for_session) so a session
+# that closes mid-fill can't leak entries forever.
+pending_fills: dict[str, dict] = {}
+
+
+def _purge_pending_fills_for_session(session_id: str) -> None:
+    stale = [rid for rid, req in pending_fills.items() if req.get("session_id") == session_id]
+    for rid in stale:
+        pending_fills.pop(rid, None)
+
 
 @ws_router.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str):
+    if not await require_ws_auth(ws):
+        await ws.close(code=4401)
+        return
+
     await manager.connect(session_id, ws)
     session = session_manager.get(session_id) or session_manager.create()
 
@@ -189,11 +219,16 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                     },
                 })
 
-                fills = match_static_fields(fields)
+                fills, sensitive_suggestions = match_static_fields(fields)
                 if fills:
                     await manager.send(session_id, {
                         "type": "profile:fills",
                         "payload": {"fills": fills},
+                    })
+                if sensitive_suggestions:
+                    await manager.send(session_id, {
+                        "type": "static:suggestions",
+                        "payload": {"suggestions": sensitive_suggestions},
                     })
 
                 category_counts: dict[str, int] = {}
@@ -249,23 +284,57 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                 })
 
             elif msg_type == "fill:approve":
+                # Accept does NOT save to memory yet — only once the content
+                # script confirms the DOM write actually succeeded (see
+                # "fill:result" below) do we call save_answer(). This is the
+                # fix for "Filled & Saved" being shown/stored before the
+                # browser ever confirmed the field was filled.
+                request_id = payload.get("requestId") or f"req_{uuid.uuid4().hex[:12]}"
+                pending_fills[request_id] = {
+                    "session_id": session_id,
+                    "question": payload.get("question", ""),
+                    "final_answer": payload.get("value", ""),
+                    "company": payload.get("company", "") or (session.company or ""),
+                    "role": payload.get("role", "") or (session.role or ""),
+                    "original_answer": payload.get("original"),
+                }
+                await manager.send(session_id, {
+                    "type": "fill:instruct",
+                    "payload": {
+                        "requestId": request_id,
+                        "fieldId": payload.get("fieldId"),
+                        "selector": payload.get("selector"),
+                        "label": payload.get("question"),
+                        "value": payload.get("value"),
+                    },
+                })
+
+            elif msg_type == "fill:result":
+                # The content script's true report of whether applyFill()
+                # actually located and wrote the field.
+                request_id = payload.get("requestId")
+                success = bool(payload.get("success"))
+                pending = pending_fills.pop(request_id, None) if request_id else None
+
+                if success and pending:
+                    await save_answer(
+                        question=pending["question"],
+                        final_answer=pending["final_answer"],
+                        company=pending["company"],
+                        role=pending["role"],
+                        session_id=pending["session_id"],
+                        original_answer=pending["original_answer"],
+                    )
+
                 await manager.send(session_id, {
                     "type": "fill:executed",
                     "payload": {
+                        "requestId": request_id,
                         "fieldId": payload.get("fieldId"),
-                        "selector": payload.get("selector"),
-                        "value": payload.get("value"),
-                        "success": True,
+                        "success": success,
+                        "reason": payload.get("reason"),
                     },
                 })
-                await save_answer(
-                    question=payload.get("question", ""),
-                    final_answer=payload.get("value", ""),
-                    company=payload.get("company", "") or (session.company or ""),
-                    role=payload.get("role", "") or (session.role or ""),
-                    session_id=session_id,
-                    original_answer=payload.get("original"),
-                )
 
             elif msg_type == "fill:reject":
                 await manager.send(session_id, {
@@ -274,11 +343,16 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                 })
 
             elif msg_type == "fill:execute":
-                selector = payload.get("selector")
-                value = payload.get("value")
+                # Static-autofill confirmation (profile:fills path). Relay
+                # the content script's actual success value instead of
+                # assuming success.
                 await manager.send(session_id, {
                     "type": "fill:executed",
-                    "payload": {"selector": selector, "value": value, "success": True},
+                    "payload": {
+                        "selector": payload.get("selector"),
+                        "value": payload.get("value"),
+                        "success": bool(payload.get("success", True)),
+                    },
                 })
 
             elif msg_type == "answer:store":
@@ -322,6 +396,10 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         manager.disconnect(session_id)
+        session_manager.delete(session_id)
+        _purge_pending_fills_for_session(session_id)
     except Exception as e:
         logger.error(f"WS error {session_id}: {e}", exc_info=True)
         manager.disconnect(session_id)
+        session_manager.delete(session_id)
+        _purge_pending_fills_for_session(session_id)

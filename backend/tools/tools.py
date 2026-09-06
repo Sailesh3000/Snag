@@ -51,13 +51,23 @@ def classify_field_heuristic(label: str, placeholder: str | None, field_type: st
         "linkedin": ["linkedin", "linked in", "linkedin url", "linkedin profile"],
         "github": ["github", "git hub", "github url", "github profile"],
         "portfolio": ["portfolio", "website", "url", "personal website", "link"],
+        # These map to real profile fields the user filled in directly (plain
+        # strings, safe to reuse verbatim) — but see SENSITIVE_STATIC_KEYS in
+        # ws.py: work_authorization/visa_status/gender/date_of_birth are
+        # surfaced for one-click review rather than auto-filled instantly.
+        "gender": ["gender", "sex"],
+        "date_of_birth": ["date of birth", "dob", "birth date"],
+        "willing_to_relocate": ["relocate", "relocation", "willing to relocate"],
+        "work_authorization": ["work authorization", "authorized to work", "legally authorized to work", "eligible to work"],
+        "visa_status": ["visa status", "visa sponsorship", "require sponsorship", "need sponsorship"],
     }
 
     for key, keywords in static_map.items():
         if any(kw in combined for kw in keywords):
             return {"category": "static", "subcategory": key, "confidence": 0.92, "label": label}
 
-    if field_type == "file" or "resume" in combined or "cover" in combined:
+    file_upload_keywords = ["resume", "cover", "upload", "attach", "browse", "choose file", ".doc", ".pdf", ".docx"]
+    if field_type == "file" or any(kw in combined for kw in file_upload_keywords):
         return {"category": "file_upload", "confidence": 0.9, "label": label}
 
     if field_type in ("select", "select-one", "select-multiple", "dropdown"):
@@ -78,32 +88,33 @@ def classify_field_heuristic(label: str, placeholder: str | None, field_type: st
                 break
         return {"category": "long_answer", "question_type": question_type, "confidence": 0.82, "label": label}
 
-    short_field_keywords = [
+    # These are real application questions with NO direct profile field to
+    # copy a value from (salary/notice-period expectations aren't stored at
+    # all) or whose profile field is structured data (education/experience
+    # are JSON arrays) that needs summarizing into prose to answer a specific
+    # question ("years of Python experience?"). Both cases need the LLM —
+    # given the full profile JSON in the prompt — not a blind static copy, so
+    # route them into the reviewable long_answer pipeline instead of a
+    # "static" category nothing can actually fill.
+    llm_answerable_short_fields = [
         "ctc", "lpa", "salary", "compensation", "pay",
         "notice period", "availability", "start date", "available",
-        "phone", "whatsapp", "mobile", "cell",
         "expected", "current", "inhand", "in hand",
-        "lakhs", "lpa", "k per annum", "per annum",
+        "lakhs", "k per annum", "per annum",
         "years of experience", "total experience", "work experience",
         "education", "qualification", "degree", "college", "university",
         "graduation", "passing year", "year of passing",
         "language", "proficiency",
         "referral", "source", "how did you hear",
-        "relocate", "relocation",
-        "gender", "date of birth", "dob", "nationality",
-        "+91", "code", "country code",
-        "select2", "container",
-        "select one", "choose one", "pick one", "select an option", "choose an option",
-        "drop or select", ".doc", ".pdf", ".docx", "upload", "attach", "browse", "choose file",
-        "recaptcha", "g-recaptcha", "captcha",
+        "nationality",
     ]
-    if any(kw in combined for kw in short_field_keywords):
+    if any(kw in combined for kw in llm_answerable_short_fields):
         qtype = "general"
         for pattern, qt in QUESTION_TYPE_PATTERNS:
             if re.search(pattern, combined):
                 qtype = qt
                 break
-        return {"category": "static", "subcategory": qtype, "confidence": 0.9, "label": label}
+        return {"category": "long_answer", "question_type": qtype, "confidence": 0.8, "label": label}
 
     if field_type in ("textarea", "text") or len(label) > 15:
         question_type = "general"
