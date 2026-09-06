@@ -110,6 +110,10 @@ async function callLLMDirectly(
         }).catch(() => {});
       },
       onDone: () => {
+        // Note: the draft is NOT saved to memory here. It's only a suggestion
+        // until the user accepts/edits+accepts it via the review UI, which
+        // triggers a "fill:approve" (or "answer:edit") message that the
+        // backend persists as approved memory.
         chrome.tabs.sendMessage(tabId, {
           type: "answer:draft",
           payload: {
@@ -124,17 +128,6 @@ async function callLLMDirectly(
             memoryCount: context.memoryCount,
           },
         }).catch(() => {});
-
-        // Store the answer in backend
-        sendToBackend(tabId, {
-          type: "answer:store",
-          payload: {
-            question: original.question,
-            answer: fullText,
-            company: original.company || context.company,
-            role: original.role || context.role,
-          },
-        });
       },
       onError: (error) => {
         console.error("[Snag] LLM error:", error);
@@ -172,16 +165,6 @@ async function callLLMDirectly(
           memoryCount: context.memoryCount,
         },
       }).catch(() => {});
-
-      sendToBackend(tabId, {
-        type: "answer:store",
-        payload: {
-          question: original.question,
-          answer: result,
-          company: original.company || context.company,
-          role: original.role || context.role,
-        },
-      });
     } catch (e2) {
       chrome.tabs.sendMessage(tabId, {
         type: "answer:draft",

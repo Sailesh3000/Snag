@@ -40,6 +40,7 @@ export default function Sidebar() {
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [streamingText, setStreamingText] = useState("");
+  const [regeneratingQuestion, setRegeneratingQuestion] = useState<string | null>(null);
 
   const statusPayload = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -98,6 +99,7 @@ export default function Sidebar() {
     if (last.type === "answer:draft") {
       setGenerating(false);
       const result = last.payload as unknown as AnswerDraft;
+      setRegeneratingQuestion((prev) => (prev === result.question ? null : prev));
       if (result.error) {
         setGenerateError(result.error);
         return;
@@ -135,9 +137,8 @@ export default function Sidebar() {
 
   const handleRegenerate = useCallback(
     (question: string) => {
-      setGenerating(true);
+      setRegeneratingQuestion(question);
       setGenerateError(null);
-      setStreamingText("");
       send({
         type: "answer:generate",
         payload: { question },
@@ -283,7 +284,13 @@ export default function Sidebar() {
               </motion.div>
             )}
             {draftAnswers.length > 0 ? (
-              <AnswerCards answers={draftAnswers} send={send} fieldMap={classifiedFieldMap} />
+              <AnswerCards
+                answers={draftAnswers}
+                send={send}
+                fieldMap={classifiedFieldMap}
+                onRegenerate={handleRegenerate}
+                regeneratingQuestion={regeneratingQuestion}
+              />
             ) : generating ? (
               <motion.div
                 initial={{ opacity: 0 }}

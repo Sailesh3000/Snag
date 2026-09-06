@@ -263,6 +263,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str):
                     company=payload.get("company", "") or (session.company or ""),
                     role=payload.get("role", "") or (session.role or ""),
                     session_id=session_id,
+                    original_answer=payload.get("original"),
                 )
 
             elif msg_type == "fill:reject":

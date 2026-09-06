@@ -78,8 +78,11 @@ async def save_answer(
     session_id: str = "",
     original_answer: str | None = None,
 ):
-    """Store a generated/approved answer in the database."""
-    await find_similar  # ensure memory_service is importable
+    """Store a user-approved answer (accept, or edit-then-accept) in the database.
+
+    Only ever called after the user has approved a fill — never for a raw
+    generated draft the user hasn't reviewed yet.
+    """
     from backend.memory.memory_service import save_answer as _save
     await _save(
         question=question,
@@ -88,4 +91,5 @@ async def save_answer(
         role=role,
         session_id=session_id,
         original_answer=original_answer,
+        question_type=detect_question_type(question),
     )

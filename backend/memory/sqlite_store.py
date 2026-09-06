@@ -12,7 +12,11 @@ class SQLiteStore:
         self._conn: sqlite3.Connection | None = None
 
     def connect(self):
-        self._conn = sqlite3.connect(self.db_path)
+        # check_same_thread=False: FastAPI's TestClient (and any sync endpoint
+        # dispatched to starlette's threadpool) can call in from a different
+        # thread than the one that opened the connection. Safe here since
+        # WAL mode + busy_timeout already serialize concurrent access.
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.execute("PRAGMA busy_timeout=5000;")
@@ -53,11 +57,26 @@ class SQLiteStore:
                 role TEXT,
                 embedding TEXT,
                 embedding_id TEXT,
+                question_type TEXT,
                 approved INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
             );
         """)
+        self._migrate_answers_table()
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_answers_embedding_id ON answers(embedding_id)"
+        )
         self._conn.commit()
+
+    def _migrate_answers_table(self):
+        """Add columns introduced after the initial release to an existing DB file."""
+        cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(answers)")}
+        if "question_type" not in cols:
+            self._conn.execute("ALTER TABLE answers ADD COLUMN question_type TEXT")
+        if "updated_at" not in cols:
+            self._conn.execute("ALTER TABLE answers ADD COLUMN updated_at TEXT")
+            self._conn.execute("UPDATE answers SET updated_at = created_at WHERE updated_at IS NULL")
 
     def get_profile(self) -> dict[str, str]:
         cursor = self._conn.execute("SELECT key, value FROM profile WHERE verified = 1")
@@ -118,12 +137,39 @@ class SQLiteStore:
         role: str = "",
         original_answer: str | None = None,
         embedding_json: str | None = None,
+        embedding_id: str | None = None,
+        question_type: str | None = None,
     ):
-        self._conn.execute(
-            "INSERT INTO answers (session_id, question, original_answer, final_answer, company, role, embedding, approved) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-            (session_id, question, original_answer, final_answer, company, role, embedding_json),
-        )
+        """Insert an approved answer, or update it in place if the same
+        (question, company, role) was already approved before — this is what
+        keeps repeated accepts of the same question from piling up duplicate
+        memories while still letting the same question get a fresh
+        per-company/per-role entry.
+        """
+        if embedding_id:
+            self._conn.execute(
+                """
+                INSERT INTO answers
+                    (session_id, question, original_answer, final_answer, company, role,
+                     embedding, embedding_id, question_type, approved, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+                ON CONFLICT(embedding_id) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    original_answer = excluded.original_answer,
+                    final_answer = excluded.final_answer,
+                    embedding = excluded.embedding,
+                    question_type = excluded.question_type,
+                    updated_at = datetime('now')
+                """,
+                (session_id, question, original_answer, final_answer, company, role,
+                 embedding_json, embedding_id, question_type),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO answers (session_id, question, original_answer, final_answer, company, role, "
+                "embedding, question_type, approved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                (session_id, question, original_answer, final_answer, company, role, embedding_json, question_type),
+            )
         self._conn.commit()
 
     def close(self):

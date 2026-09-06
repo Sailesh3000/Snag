@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export interface AnswerDraft {
@@ -17,16 +17,25 @@ interface AnswerCardsProps {
   answers: AnswerDraft[];
   send: (msg: object) => void;
   fieldMap?: Map<string, { selector: string; fieldId: string }>;
+  onRegenerate?: (question: string) => void;
+  regeneratingQuestion?: string | null;
 }
 
-export default function AnswerCards({ answers, send, fieldMap }: AnswerCardsProps) {
+export default function AnswerCards({ answers, send, fieldMap, onRegenerate, regeneratingQuestion }: AnswerCardsProps) {
   if (!answers || answers.length === 0) return null;
 
   return (
     <div className="space-y-2">
       <AnimatePresence>
-        {answers.map((a, i) => (
-          <AnswerCard key={`${a.question}-${i}`} answer={a} send={send} index={i} fieldMap={fieldMap} />
+        {answers.map((a) => (
+          <AnswerCard
+            key={a.question}
+            answer={a}
+            send={send}
+            fieldMap={fieldMap}
+            onRegenerate={onRegenerate}
+            regenerating={regeneratingQuestion === a.question}
+          />
         ))}
       </AnimatePresence>
     </div>
@@ -36,28 +45,54 @@ export default function AnswerCards({ answers, send, fieldMap }: AnswerCardsProp
 function AnswerCard({
   answer,
   send,
-  index,
   fieldMap,
+  onRegenerate,
+  regenerating,
 }: {
   answer: AnswerDraft;
   send: (msg: object) => void;
-  index: number;
   fieldMap?: Map<string, { selector: string; fieldId: string }>;
+  onRegenerate?: (question: string) => void;
+  regenerating?: boolean;
 }) {
   const [draft, setDraft] = useState(answer.draft);
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState<"draft" | "approved" | "rejected">("draft");
 
-  const handleApprove = useCallback(() => {
+  // A regenerate produces a new draft for the same question (same card, same
+  // key) — reset local edit/approve state whenever the underlying draft text
+  // actually changes, rather than only on first mount.
+  useEffect(() => {
+    setDraft(answer.draft);
+    setStatus("draft");
+    setEditing(false);
+  }, [answer.draft]);
+
+  const acceptAnswer = useCallback((finalText: string, wasEdited: boolean) => {
     setStatus("approved");
     const fieldInfo = fieldMap?.get(answer.question);
     const selector = fieldInfo?.selector || "";
     const fieldId = fieldInfo?.fieldId || answer.question;
-    send({ type: "fill:preview", payload: { value: draft, question: answer.question, label: answer.question, selector, fieldId } });
+    send({ type: "fill:preview", payload: { value: finalText, question: answer.question, label: answer.question, selector, fieldId } });
     setTimeout(() => {
-      send({ type: "fill:approve", payload: { value: draft, question: answer.question, selector, fieldId } });
+      send({
+        type: "fill:approve",
+        payload: {
+          value: finalText,
+          question: answer.question,
+          selector,
+          fieldId,
+          company: answer.company,
+          role: answer.role,
+          ...(wasEdited ? { original: answer.draft } : {}),
+        },
+      });
     }, 300);
-  }, [draft, answer.question, send, fieldMap]);
+  }, [answer.question, answer.draft, answer.company, answer.role, send, fieldMap]);
+
+  const handleApprove = useCallback(() => {
+    acceptAnswer(draft, false);
+  }, [draft, acceptAnswer]);
 
   const handleReject = useCallback(() => {
     setStatus("rejected");
@@ -65,9 +100,12 @@ function AnswerCard({
   }, [send]);
 
   const handleSaveEdit = useCallback(() => {
-    setEditing(false);
-    send({ type: "answer:edit", payload: { question: answer.question, edited: draft, original: answer.draft } });
-  }, [draft, answer.question, answer.draft, send]);
+    acceptAnswer(draft, draft !== answer.draft);
+  }, [draft, answer.draft, acceptAnswer]);
+
+  const handleRegenerate = useCallback(() => {
+    onRegenerate?.(answer.question);
+  }, [answer.question, onRegenerate]);
 
   if (status === "approved") {
     return (
@@ -97,7 +135,7 @@ function AnswerCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4, height: 0 }}
-      transition={{ delay: index * 0.05, duration: 0.25 }}
+      transition={{ duration: 0.25 }}
       className="glass rounded-xl p-3 gradient-border"
     >
       <div className="flex items-center justify-between mb-2">
@@ -116,7 +154,12 @@ function AnswerCard({
 
       <p className="text-[10px] text-gray-500 mb-2 leading-relaxed">{answer.question}</p>
 
-      {editing ? (
+      {regenerating ? (
+        <div className="flex items-center gap-2 py-3 justify-center">
+          <div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+          <span className="text-[10px] text-gray-500">Regenerating...</span>
+        </div>
+      ) : editing ? (
         <textarea
           className="w-full text-[11px] bg-surface/60 rounded-lg border border-surface-border p-2.5 text-gray-200 resize-none focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all font-mono leading-relaxed"
           rows={5}
@@ -132,62 +175,75 @@ function AnswerCard({
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 mt-2.5">
-        {editing ? (
-          <>
-            <button
-              onClick={handleSaveEdit}
-              className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-all"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              Save
-            </button>
-            <button
-              onClick={() => { setEditing(false); setDraft(answer.draft); }}
-              className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-all"
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={handleApprove}
-              className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 hover:shadow-[0_0_12px_rgba(52,211,153,0.15)] transition-all"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              Fill
-            </button>
-            <button
-              onClick={() => setEditing(true)}
-              className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-              Edit
-            </button>
-            <button
-              onClick={handleReject}
-              className="flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </>
-        )}
+      {!regenerating && (
+        <div className="flex items-center gap-1.5 mt-2.5">
+          {editing ? (
+            <>
+              <button
+                onClick={handleSaveEdit}
+                className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-all"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                Accept
+              </button>
+              <button
+                onClick={() => { setEditing(false); setDraft(answer.draft); }}
+                className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-all"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={handleApprove}
+                className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 hover:shadow-[0_0_12px_rgba(52,211,153,0.15)] transition-all"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                Accept
+              </button>
+              <button
+                onClick={() => setEditing(true)}
+                className="flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all"
+                title="Edit"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+              <button
+                onClick={handleRegenerate}
+                disabled={!onRegenerate}
+                className="flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-all disabled:opacity-30"
+                title="Regenerate"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+              <button
+                onClick={handleReject}
+                className="flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
+                title="Skip"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </>
+          )}
 
-        {answer.memoryCount > 0 && (
-          <span className="ml-auto text-[9px] text-gray-600 font-mono">
-            {answer.memoryCount} memory
-          </span>
-        )}
-      </div>
+          {answer.memoryCount > 0 && (
+            <span className="ml-auto text-[9px] text-gray-600 font-mono">
+              {answer.memoryCount} memory
+            </span>
+          )}
+        </div>
+      )}
     </motion.div>
   );
 }

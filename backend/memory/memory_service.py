@@ -23,14 +23,26 @@ async def save_answer(
     role: str = "",
     session_id: str = "",
     original_answer: str | None = None,
+    question_type: str | None = None,
 ):
     embedding = await generate_embedding(question)
     embedding_json = json.dumps(embedding) if embedding else None
+    embedding_id = _point_id(question, company, role)
 
     sqlite_store.save_answer(
-        session_id, question, final_answer, company, role, original_answer, embedding_json
+        session_id, question, final_answer, company, role, original_answer,
+        embedding_json, embedding_id, question_type,
     )
     logger.info(f"Saved memory: q={question[:50]}...")
+
+
+# Same-company/role matches are ranked slightly higher (they're more likely to be
+# directly reusable) but a cross-company match still wins on strong semantic
+# similarity — this is what lets a previously-approved "why this company" answer
+# surface for a brand-new company so the LLM can adapt it instead of that
+# history being invisible to retrieval.
+COMPANY_BOOST = 0.05
+ROLE_BOOST = 0.03
 
 
 async def find_similar(
@@ -49,37 +61,42 @@ async def find_similar(
     if not conn:
         return []
 
-    sql = "SELECT id, session_id, question, final_answer, company, role, embedding FROM answers WHERE embedding IS NOT NULL"
-    params: list = []
-    if company:
-        sql += " AND company = ?"
-        params.append(company)
-    if role:
-        sql += " AND role = ?"
-        params.append(role)
-    sql += " ORDER BY created_at DESC LIMIT 100"
-
-    cursor = conn.execute(sql, params)
+    cursor = conn.execute(
+        "SELECT id, session_id, question, final_answer, company, role, embedding, question_type "
+        "FROM answers WHERE embedding IS NOT NULL ORDER BY created_at DESC LIMIT 200"
+    )
     results = []
     for row in cursor.fetchall():
         try:
             stored_emb = np.array(json.loads(row["embedding"]), dtype=np.float32)
             score = float(np.dot(query_vec, stored_emb) / (np.linalg.norm(query_vec) * np.linalg.norm(stored_emb) + 1e-8))
-            if score >= min_score:
-                results.append({
-                    "id": str(row["id"]),
-                    "score": score,
-                    "payload": {
-                        "question": row["question"],
-                        "answer": row["final_answer"],
-                        "company": row["company"] or "",
-                        "role": row["role"] or "",
-                    },
-                })
         except Exception:
             continue
+        if score < min_score:
+            continue
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+        rank_score = score
+        if company and row["company"] == company:
+            rank_score += COMPANY_BOOST
+        if role and row["role"] == role:
+            rank_score += ROLE_BOOST
+
+        results.append({
+            "id": str(row["id"]),
+            "score": score,
+            "rank_score": rank_score,
+            "payload": {
+                "question": row["question"],
+                "answer": row["final_answer"],
+                "company": row["company"] or "",
+                "role": row["role"] or "",
+                "questionType": row["question_type"] or "",
+            },
+        })
+
+    results.sort(key=lambda x: x["rank_score"], reverse=True)
+    for r in results:
+        del r["rank_score"]
     return results[:top_k]
 
 

@@ -48,7 +48,10 @@ flowchart LR
 3. **Classify** — Backend categorizes each field (name, email, question, etc.)
 4. **User Clicks Question** — Click any open-ended question in the sidebar
 5. **Generate Answer** — LLM generates a tailored draft using your profile + past answers
-6. **Approve & Fill** — Click "Approve" to auto-fill the field
+6. **Review** — Accept, Edit (then accept), Regenerate, or Skip
+7. **Fill & Learn** — Accepting fills the field and stores the final answer as memory, so a similar question on a future application — even for a different company — can be recognized and adapted
+
+Only an answer you actually accept (or edit-then-accept) is ever stored as memory. Regenerating or skipping never touches memory, and re-accepting the same question updates its existing memory entry instead of creating a duplicate.
 
 ---
 
@@ -59,8 +62,8 @@ Snag/
 ├── backend/
 │   ├── app.py                  # FastAPI entry point
 │   ├── config.py               # Pydantic settings
-│   ├── answer_service.py       # LLM answer generation
-│   ├── orchestrator.py         # Strands multi-agent graph
+│   ├── answer_service.py       # Builds the prompt/context sent to the extension's LLM call
+│   ├── orchestrator.py         # Strands multi-agent graph (legacy, not on the live path)
 │   ├── llm_providers/
 │   │   └── provider_router.py  # Ollama/OpenAI/Anthropic/Groq
 │   ├── memory/
@@ -72,8 +75,9 @@ Snag/
 │   │   ├── answer_routes.py    # POST /api/answer/generate
 │   │   ├── profile_routes.py   # Profile CRUD
 │   │   └── memory_routes.py    # Memory retrieval
-│   ├── agents/                 # Strands agent definitions
+│   ├── agents/                 # Strands agent graph (legacy, not on the live path)
 │   ├── prompts/                # Question-type templates
+│   ├── tests/                  # pytest suite for the learning loop
 │   └── requirements.txt
 │
 ├── extension/
@@ -254,6 +258,30 @@ Built to run unattended as a persistent local tool:
 
 ---
 
+## Memory & Retrieval
+
+Approved answers are matched by semantic similarity (sentence-transformers embeddings,
+cosine similarity) rather than exact text match, so paraphrased questions ("why do you
+want to join this company" vs. "why are you interested in working here") retrieve the
+same memory. Retrieval is **not** restricted to the current company/role — a same
+company/role match ranks slightly higher, but a strong semantic match from a different
+company still surfaces, and the answer-generation prompt explicitly instructs the model
+to adapt (not copy) an answer written for a different company/role. Re-accepting the
+same question for the same company/role updates that memory in place instead of
+creating a duplicate row.
+
+## Testing
+
+```bash
+# Backend test suite (profile CRUD, classification, semantic retrieval,
+# cross-company adaptation, dedup, prompt construction, error handling)
+python -m pip install -r backend/requirements.txt
+python -m pytest -q
+```
+
+Tests run against an isolated temp SQLite file and a fast deterministic stand-in for
+the embedding model — no model download or GPU needed to run them.
+
 ## Development
 
 ```bash
@@ -266,12 +294,30 @@ cd extension && npx tsc --noEmit
 # Backend import check
 python -c "from backend.app import app; print('OK')"
 
+# Backend tests
+python -m pytest -q
+
 # Build UI only
 cd ui && npm run build
 
 # Build extension only
 cd extension && npm run build
 ```
+
+---
+
+## Known Limitations
+
+- Form filling reliably handles `<input>`/`<textarea>`/contenteditable fields. `<select>`
+  dropdowns, radio groups, and checkboxes are classified correctly but not yet filled
+  with full fidelity on every site.
+- Job context passed to answer generation is currently limited to a best-effort page
+  title/company scrape — no job description text is extracted yet.
+- No automated tests for the extension/content-script layer (JS/TS) yet; the pytest
+  suite covers the backend learning loop end-to-end.
+- `backend/orchestrator.py` and `backend/agents/` are a pre-refactor Strands
+  multi-agent design, superseded by the direct WebSocket handlers in `backend/api/ws.py`
+  and `backend/answer_service.py`. Left in place but unused; candidate for removal.
 
 ---
 
