@@ -1,4 +1,4 @@
-import { LLM_TIMEOUT_MS } from "./constants.js";
+import { LLM_TIMEOUT_MS, isTimeoutAbort } from "./constants.js";
 
 export interface OllamaOptions {
   baseUrl: string;
@@ -19,27 +19,32 @@ export async function ollamaGenerate(
   prompt: string,
   opts: OllamaOptions,
 ): Promise<string> {
-  const r = await fetch(`${opts.baseUrl}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-    body: JSON.stringify({
-      model: opts.model,
-      system,
-      prompt: `/no_think\n${prompt}`,
-      stream: false,
-      options: {
-        num_predict: opts.numPredict ?? 1024,
-        temperature: opts.temperature ?? 0.7,
-        top_p: opts.topP ?? 0.9,
-      },
-    }),
-  });
-  if (!r.ok) throw new Error(`Ollama ${r.status}: ${await r.text()}`);
-  const data = await r.json();
-  let text = (data.response ?? "").trim();
-  if (!text && data.thinking) text = data.thinking.trim();
-  return text;
+  try {
+    const r = await fetch(`${opts.baseUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: opts.model,
+        system,
+        prompt: `/no_think\n${prompt}`,
+        stream: false,
+        options: {
+          num_predict: opts.numPredict ?? 1024,
+          temperature: opts.temperature ?? 0.7,
+          top_p: opts.topP ?? 0.9,
+        },
+      }),
+    });
+    if (!r.ok) throw new Error(`Ollama ${r.status}: ${await r.text()}`);
+    const data = await r.json();
+    let text = (data.response ?? "").trim();
+    if (!text && data.thinking) text = data.thinking.trim();
+    return text;
+  } catch (e) {
+    if (isTimeoutAbort(e)) throw new Error(`Ollama request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+    throw e;
+  }
 }
 
 export async function ollamaGenerateStream(
@@ -104,7 +109,6 @@ export async function ollamaGenerateStream(
     // resolve the UI instead of leaving it spinning forever.
     callbacks.onDone();
   } catch (e) {
-    const timedOut = e instanceof DOMException && e.name === "TimeoutError";
-    callbacks.onError(timedOut ? `Ollama request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
+    callbacks.onError(isTimeoutAbort(e) ? `Ollama request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
   }
 }

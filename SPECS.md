@@ -254,7 +254,7 @@ CREATE TABLE answers (
 |---|---|
 | Concurrent DB access | SQLite **WAL mode** + `busy_timeout=5000` on every connection |
 | Crash diagnostics | `logs/snag.log` via `RotatingFileHandler` (5MB × 5 backups, INFO) + console WARNING |
-| LLM outages | Extension-side (`extension/src/llm/*.ts`): every provider call capped at 45s via `AbortSignal.timeout`, one retry (1s backoff) on timeout/network error only |
+| LLM outages | Extension-side (`extension/src/llm/*.ts`): every provider call capped at 90s via `AbortSignal.timeout`, one retry (1s backoff) on timeout/network error only |
 | LLM failure UX | `answer:draft` payload carries `error`; the Answers card shows it with Retry/Skip/Fill-manually — never a silent hang |
 | Fill confirmation | Accept doesn't report/save success until the content script confirms the DOM write; failure shows Retry/Edit/Skip/Fill-manually |
 | Startup safety | `start.py` preflight: hard-fails if the port is in use; warns (non-fatal) if Ollama is unreachable |

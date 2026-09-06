@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { ollamaGenerateStream } from "./ollama.js";
+import { ollamaGenerate, ollamaGenerateStream } from "./ollama.js";
 
 function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -119,5 +119,52 @@ describe("ollamaGenerateStream", () => {
 
     expect(onDone).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.stringContaining("500"));
+  });
+
+  it("reports a clear timeout error for the real Chrome mid-stream abort shape (AbortError, not TimeoutError)", async () => {
+    // Regression test: AbortSignal.timeout() aborts with reason
+    // "TimeoutError", but Chrome's reader.read() rejects the SAME abort
+    // with a plain "AbortError" ("BodyStreamBuffer was aborted") instead of
+    // propagating that reason. Classification must catch this name too, or
+    // it falls through to the raw, unhelpful message.
+    const body = new ReadableStream<Uint8Array>({
+      pull() {
+        throw new DOMException("BodyStreamBuffer was aborted", "AbortError");
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => fakeResponse(body)));
+
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    await ollamaGenerateStream("sys", "prompt", { baseUrl: "http://x", model: "m" }, { onChunk: vi.fn(), onDone, onError });
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toMatch(/timed out/i);
+    expect(onError.mock.calls[0][0]).not.toMatch(/BodyStreamBuffer/i);
+  });
+});
+
+describe("ollamaGenerate (non-streaming)", () => {
+  it("returns the response text on success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ response: "hello" }) }) as unknown as Response));
+    const text = await ollamaGenerate("sys", "prompt", { baseUrl: "http://x", model: "m" });
+    expect(text).toBe("hello");
+  });
+
+  it("re-throws a timeout abort as a clear, plain-language error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("BodyStreamBuffer was aborted", "AbortError");
+      }),
+    );
+    await expect(ollamaGenerate("sys", "prompt", { baseUrl: "http://x", model: "m" })).rejects.toThrow(/timed out/i);
+  });
+
+  it("propagates a non-timeout error unchanged", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("network down"); }));
+    await expect(ollamaGenerate("sys", "prompt", { baseUrl: "http://x", model: "m" })).rejects.toThrow(/network down/);
   });
 });

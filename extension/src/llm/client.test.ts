@@ -75,6 +75,25 @@ describe("llmGenerate retry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("retries once on a timeout abort and succeeds", async () => {
+    // Regression test: ollamaGenerate re-throws an abort as a plain Error
+    // with a "timed out" message (not the original DOMException), so the
+    // retry check must key off that message, not e.name/instanceof DOMException.
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException("BodyStreamBuffer was aborted", "AbortError"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ response: "second try worked" }),
+      } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await llmGenerate("sys", "prompt", settings({ provider: "ollama" }));
+
+    expect(result).toBe("second try worked");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("does not retry a non-transient error (e.g. HTTP error)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

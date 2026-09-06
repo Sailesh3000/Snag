@@ -315,7 +315,7 @@ Built to run unattended as a persistent local tool:
 
 - **SQLite WAL mode** — concurrent readers + one writer with a 5s busy timeout (no "database is locked")
 - **LLM calls have a timeout and a single retry** — the extension calls the LLM
-  provider directly (not the backend), each call is capped at 45s
+  provider directly (not the backend), each call is capped at 90s
   (`extension/src/llm/constants.ts`) via `AbortSignal.timeout`, and a transient
   network/timeout failure gets exactly one retry with a 1s backoff — never an
   unbounded retry loop. A generation that somehow still doesn't resolve within 100s

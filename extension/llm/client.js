@@ -25,15 +25,23 @@ export function resolveBaseUrl(settings) {
 }
 // A single retry (not a loop) for the non-streaming path, only for
 // transient failures (timeout / network error) — a bad API key or a 4xx
-// response won't be retried since retrying can't fix those.
+// response won't be retried since retrying can't fix those. Each
+// provider's generate() re-throws an abort as a plain Error with a "timed
+// out" message (see ollama/openai/anthropic.ts), so check for that rather
+// than the original DOMException name/type.
+function isRetryableError(e) {
+    if (e instanceof TypeError)
+        return true; // fetch-level network failure
+    if (e instanceof Error && /timed out/i.test(e.message))
+        return true;
+    return false;
+}
 async function withSingleRetry(fn) {
     try {
         return await fn();
     }
     catch (e) {
-        const isTimeout = e instanceof DOMException && e.name === "TimeoutError";
-        const isNetworkError = e instanceof TypeError;
-        if (!isTimeout && !isNetworkError)
+        if (!isRetryableError(e))
             throw e;
         await new Promise((resolve) => setTimeout(resolve, 1000));
         return await fn();

@@ -1,4 +1,4 @@
-import { LLM_TIMEOUT_MS } from "./constants.js";
+import { LLM_TIMEOUT_MS, isTimeoutAbort } from "./constants.js";
 
 export interface AnthropicOptions {
   apiKey: string;
@@ -21,26 +21,31 @@ export async function anthropicGenerate(
   prompt: string,
   opts: AnthropicOptions,
 ): Promise<string> {
-  const r = await fetch(`${ANTHROPIC_API}/v1/messages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": opts.apiKey,
-      "anthropic-version": ANTHROPIC_VERSION,
-    },
-    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-    body: JSON.stringify({
-      model: opts.model,
-      system,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: opts.maxTokens ?? 1024,
-      temperature: opts.temperature ?? 0.7,
-    }),
-  });
-  if (!r.ok) throw new Error(`Anthropic ${r.status}: ${await r.text()}`);
-  const data = await r.json();
-  const textBlock = data.content?.find((b: { type: string }) => b.type === "text");
-  return (textBlock?.text ?? "").trim();
+  try {
+    const r = await fetch(`${ANTHROPIC_API}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": opts.apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+      },
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: opts.model,
+        system,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: opts.maxTokens ?? 1024,
+        temperature: opts.temperature ?? 0.7,
+      }),
+    });
+    if (!r.ok) throw new Error(`Anthropic ${r.status}: ${await r.text()}`);
+    const data = await r.json();
+    const textBlock = data.content?.find((b: { type: string }) => b.type === "text");
+    return (textBlock?.text ?? "").trim();
+  } catch (e) {
+    if (isTimeoutAbort(e)) throw new Error(`Anthropic request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+    throw e;
+  }
 }
 
 export async function anthropicGenerateStream(
@@ -101,7 +106,6 @@ export async function anthropicGenerateStream(
     }
     callbacks.onDone();
   } catch (e) {
-    const timedOut = e instanceof DOMException && e.name === "TimeoutError";
-    callbacks.onError(timedOut ? `Anthropic request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
+    callbacks.onError(isTimeoutAbort(e) ? `Anthropic request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
   }
 }

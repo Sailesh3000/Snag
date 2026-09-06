@@ -1,28 +1,35 @@
-import { LLM_TIMEOUT_MS } from "./constants.js";
+import { LLM_TIMEOUT_MS, isTimeoutAbort } from "./constants.js";
 export async function openaiGenerate(system, prompt, opts) {
-    const r = await fetch(`${opts.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${opts.apiKey}`,
-        },
-        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-        body: JSON.stringify({
-            model: opts.model,
-            messages: [
-                { role: "system", content: system },
-                { role: "user", content: prompt },
-            ],
-            stream: false,
-            temperature: opts.temperature ?? 0.7,
-            top_p: opts.topP ?? 0.9,
-            max_tokens: opts.maxTokens ?? 1024,
-        }),
-    });
-    if (!r.ok)
-        throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
-    const data = await r.json();
-    return (data.choices?.[0]?.message?.content ?? "").trim();
+    try {
+        const r = await fetch(`${opts.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${opts.apiKey}`,
+            },
+            signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+            body: JSON.stringify({
+                model: opts.model,
+                messages: [
+                    { role: "system", content: system },
+                    { role: "user", content: prompt },
+                ],
+                stream: false,
+                temperature: opts.temperature ?? 0.7,
+                top_p: opts.topP ?? 0.9,
+                max_tokens: opts.maxTokens ?? 1024,
+            }),
+        });
+        if (!r.ok)
+            throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
+        const data = await r.json();
+        return (data.choices?.[0]?.message?.content ?? "").trim();
+    }
+    catch (e) {
+        if (isTimeoutAbort(e))
+            throw new Error(`OpenAI request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+        throw e;
+    }
 }
 export async function openaiGenerateStream(system, prompt, opts, callbacks) {
     const r = await fetch(`${opts.baseUrl}/chat/completions`, {
@@ -84,7 +91,6 @@ export async function openaiGenerateStream(system, prompt, opts, callbacks) {
         callbacks.onDone();
     }
     catch (e) {
-        const timedOut = e instanceof DOMException && e.name === "TimeoutError";
-        callbacks.onError(timedOut ? `OpenAI request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
+        callbacks.onError(isTimeoutAbort(e) ? `OpenAI request timed out after ${LLM_TIMEOUT_MS / 1000}s` : String(e));
     }
 }
