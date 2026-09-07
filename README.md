@@ -491,4 +491,4 @@ local end-to-end (Ollama), and the only one that's open source.
 
 ## License
 
-MIT
+[MIT](./LICENSE)
