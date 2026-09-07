@@ -1,0 +1,9 @@
+# Windows batch files require CRLF - cmd.exe's parser can silently corrupt
+# LF-only .bat files (observed directly while building the pilot package:
+# it ate the first character of several lines).
+*.bat text eol=crlf
+
+# macOS/Linux shell scripts require LF - a CRLF shebang line
+# (`#!/bin/bash\r`) fails to exec on Unix with "bad interpreter".
+*.command text eol=lf
+*.sh text eol=lf

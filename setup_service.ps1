@@ -30,10 +30,33 @@ if (-not $isAdmin) {
 $nssm = Get-Command nssm.exe -ErrorAction SilentlyContinue
 
 if (-not $nssm) {
+    # Not on PATH (e.g. winget just installed it and the shell hasn't restarted).
+    # Search common install locations.
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages\NSSM*\*\win64\nssm.exe"),
+        (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages\NSSM*\*\win32\nssm.exe"),
+        (Join-Path ${env:ProgramFiles} "NSSM\*\win64\nssm.exe"),
+        (Join-Path ${env:ProgramFiles} "NSSM\*\win32\nssm.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "NSSM\*\win64\nssm.exe")
+    )
+    foreach ($pattern in $candidates) {
+        $match = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($match) {
+            $nssm = New-Object PSObject -Property @{ Source = $match.FullName }
+            break
+        }
+    }
+}
+
+if (-not $nssm) {
     if ($ForceInstallNssm) {
         Write-Host "Installing NSSM via winget..." -ForegroundColor Cyan
-        winget install --id NSSM.NSSM -e --accept-source-agreements --accept-package-agreements
+        winget install --id NSSM.NSSM -e --accept-source-agreements --accept-package-agreements | Out-Host
         $nssm = Get-Command nssm.exe -ErrorAction SilentlyContinue
+        if (-not $nssm) {
+            $match = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages\NSSM*\*\win64\nssm.exe") -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($match) { $nssm = New-Object PSObject -Property @{ Source = $match.FullName } }
+        }
     }
 }
 

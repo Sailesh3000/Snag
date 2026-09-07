@@ -8,6 +8,7 @@ logs/
 .env
 dist/
 build/
+runtime/
 extension/sidebar/
 extension/settings/*.js
 extension/settings/*.js.map

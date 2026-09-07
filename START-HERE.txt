@@ -1,0 +1,22 @@
+WELCOME TO SNAG
+
+1. Start Snag:
+   Windows -> double-click windows\Start-Snag.bat
+   Mac     -> double-click mac\Start-Snag.command
+
+2. Install the Chrome extension (one time):
+   chrome://extensions -> Developer mode ON -> Load unpacked -> select
+   the "extension" folder in this Snag folder.
+
+3. Add your Snag token:
+   Right-click the Snag icon in Chrome -> Options -> paste the token
+   shown after step 1 -> Save.
+
+4. Open a real job application.
+
+5. Try Snag: click a question, review the answer, Accept/Edit/Skip.
+
+6. Send feedback: fill out FEEDBACK.md and send it back.
+
+Full guide: README-PILOT.md
+Stuck? See the Troubleshooting section in README-PILOT.md.

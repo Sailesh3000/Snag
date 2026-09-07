@@ -1,43 +1,41 @@
 # Snag Pilot Feedback
 
-Thanks for trying Snag. Please fill this out after testing on at least a few
-real applications and send it back — your answers directly shape what gets
-fixed before this goes to more people.
+Thanks for trying Snag. Please fill this out after using it on at least a
+couple of real applications and send it back. No need to include the actual
+text of your application answers — describe what happened, not the content.
 
-1. **How many applications did you use Snag on?**
-   _______
+### About the application
 
-2. **Which site(s) did you test it on?** (e.g. LinkedIn, Workday, Greenhouse, company site)
-   _______
+1. What role/company were you applying for? (general is fine, e.g. "software
+   engineer role")
+2. Roughly how many fields/questions did the form have?
 
-3. **Field detection** — did Snag correctly find the fields on the form?
-   - [ ] Always  [ ] Often  [ ] Sometimes  [ ] Never
-   Comments: _______
+### Snag experience
 
-4. **Answer quality** — for generated answers to open-ended questions
-   ("Tell us about yourself", "Why this company?"), how relevant/usable were they?
-   - [ ] Excellent  [ ] Good  [ ] Fair  [ ] Poor
-   What worked, what was off: _______
+3. Was setup easy? Anything confusing about installing/starting Snag or the
+   extension?
+4. Which fields did Snag detect correctly?
+5. Which fields did it fill in correctly without you touching them?
+6. Which fields failed (not detected, or filled wrong)?
+7. How good were the generated answers to open-ended questions? (Excellent /
+   Good / Fair / Poor, plus what worked or was off)
+8. How much editing did you have to do before accepting an answer? (Never /
+   Rarely / Sometimes / Always)
+9. If you saw a question similar to one you'd already answered elsewhere, did
+   the "remembered" answer help? (N/A / Yes, adapted well / Found it but
+   adaptation was off / Didn't find it)
+10. Did Snag save you time overall, compared to filling the form by hand?
 
-5. **How often did you need to edit a generated answer before accepting it?**
-   - [ ] Never  [ ] Rarely  [ ] Sometimes  [ ] Always
+### Most important questions
 
-6. **Memory/reuse** — if you saw a question similar to one you'd already
-   answered elsewhere, did Snag retrieve and adapt it well?
-   - [ ] N/A, didn't hit this  [ ] Yes, worked well  [ ] Found it but adaptation was off  [ ] Didn't find it
-   Comments: _______
+11. Would you use Snag again?
+12. Would you use it for your next real application?
+13. What was the most useful feature?
+14. What was the most frustrating part?
+15. What would make you keep using it?
 
-7. **Did any field fail to fill, or fill wrong?** Which ones?
-   _______
+### Anything else
 
-8. **Roughly how much time did Snag save you per application** vs. filling it
-   out by hand?
-   - [ ] None / slower  [ ] <2 min  [ ] 2–5 min  [ ] 5–10 min  [ ] >10 min
-
-9. **Would you keep using Snag?** Why or why not?
-   _______
-
-10. **Anything else** — bugs, confusing UI, missing feature, anything?
-    _______
+16. Bugs, confusing UI, missing feature, anything at all.
 
 Thanks again for the help.

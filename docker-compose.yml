@@ -2,7 +2,12 @@ services:
   backend:
     build: .
     ports:
-      - "8765:8765"
+      # Bind the HOST side to loopback only — "8765:8765" would publish on
+      # every host interface (LAN-reachable), undoing the point of the
+      # backend's own 127.0.0.1 default. SNAG_HOST must stay 0.0.0.0 inside
+      # the container (that's the container's own private network
+      # namespace, not the host's) or Docker can't forward to it at all.
+      - "127.0.0.1:8765:8765"
     environment:
       - SNAG_HOST=0.0.0.0
       - SNAG_PORT=8765

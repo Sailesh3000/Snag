@@ -1,121 +1,184 @@
-# Snag Pilot — Setup Guide
+# Snag — Pilot Guide
 
-Thanks for helping test Snag. It's an AI job-application copilot: it detects
-form fields on job sites, drafts answers using your profile, and learns from
-the answers you approve so future similar questions get better over time.
+## What is Snag?
 
-**You run Snag entirely on your own computer.** There's no shared server or
-account — your profile, your answers, and your auth token are all generated
-locally, on your machine, the first time you start it. Nobody else (including
-the person who gave you this) can see your data unless you tell them.
+Snag is a Chrome extension that helps you fill out job applications faster. It
+runs on your own computer — there's no company server involved, and nobody
+else can see your profile or answers.
+
+## What Snag does
+
+```
+Your profile (name, resume, skills, experience)
+        |
+        v
+Snag detects the questions on a job application
+        |
+        v
+Snag looks up relevant info from your profile + past answers
+        |
+        v
+Snag generates a draft answer
+        |
+        v
+YOU review it — Accept, Edit, Regenerate, or Skip
+        |
+        v
+Snag fills the field you approved
+        |
+        v
+Your approved answer is remembered for next time
+(so a similar question on a future application gets a better draft)
+```
+
+**Snag never submits an application for you.** It only fills in fields you've
+approved — you always click Submit yourself.
 
 ## Before you start
 
-- Python 3.12+ and Node.js 20+ installed
 - Google Chrome
-- Either [Ollama](https://ollama.com) running locally with a model pulled (free,
-  fully private), or an API key for OpenAI/Anthropic/Groq (your own account —
-  Snag never sees or stores the key, but that provider does see your questions
-  and profile when you use it)
+- Python 3.12 or newer (the setup script will tell you clearly if it's
+  missing, with a link to install it — see Troubleshooting if that happens)
+- Optional: [Ollama](https://ollama.com) running locally with a model pulled,
+  if you want to run the AI fully on your own computer instead of using a
+  cloud provider's API key
 
-If you're not sure how to install Python/Node, ask whoever gave you this pilot
-build — that one-time setup is the only slightly technical part.
+## Windows setup
 
-## Setup
+1. Unzip the Snag folder you were given, anywhere you like.
+2. Open the `windows` folder and double-click **Start-Snag.bat**.
+3. The first run takes a few minutes (one-time setup). After that it's quick.
+4. When it says "Snag backend started successfully", keep reading — it'll
+   show you your auth token and the next steps right there in the window.
 
-1. **Install dependencies** (from the project folder, one time):
-   ```bash
-   pip install -r backend/requirements.txt
-   cd ui && npm install && cd ..
-   cd extension && npm install && cd ..
-   ```
+## Mac setup
 
-2. **Start Snag:**
-   ```bash
-   python start.py
-   ```
-   This builds the extension, runs a few safety checks, and starts the backend.
-   Leave this window open while you use Snag.
+1. Unzip the Snag folder you were given, anywhere you like.
+2. Open the `mac` folder and double-click **Start-Snag.command**.
+   - If macOS says it can't verify the developer, right-click (or Control-click)
+     the file, choose **Open**, then confirm — this is normal for any script
+     downloaded outside the App Store, not a Snag-specific problem.
+3. The first run takes a few minutes (one-time setup). After that it's quick.
+4. When it says "Snag backend started successfully", keep reading — it'll
+   show you your auth token and the next steps right there in the window.
 
-3. **Find your auth token.** On this first run, the terminal (and
-   `logs/snag.log`) prints something like:
-   ```
-   Snag auth token (paste into the extension's Settings page):
-     <a long random string>
-   ```
-   This token is unique to your machine — generated just now, for you. Copy it.
+## Chrome extension setup
 
-4. **Load the extension in Chrome:**
-   - Go to `chrome://extensions`, enable **Developer mode** (top right)
-   - Click **Load unpacked** → select the `extension/` folder
-   - The Snag icon should appear in your toolbar
+1. Go to `chrome://extensions`
+2. Turn on **Developer mode** (top-right toggle)
+3. Click **Load unpacked** and select the `extension` folder inside the Snag
+   folder you were given
+4. The Snag icon should appear in your Chrome toolbar
 
-5. **Pair the extension with your backend:**
-   - Right-click the Snag icon → **Options**
-   - Paste your auth token into **Backend Auth Token**
-   - Pick your LLM provider (Ollama, or paste your API key for OpenAI/Anthropic/Groq)
-   - Save
+You only need to do this once.
 
-6. **Build your profile** — click the Snag icon on any page to open the sidebar:
-   - Use **Import from resume** (Profile section) to upload a `.pdf`/`.txt` and
-     auto-fill fields — review what it extracted before applying, nothing saves
-     automatically
-   - Fill in anything it missed by hand (work authorization, visa status, etc.
-     are intentionally not auto-extracted from a resume — enter those yourself)
+## Token setup
 
-## Using Snag on a real application
+Each person running Snag gets their **own** auth token, generated automatically
+the first time you start it — nobody hands this out or shares it with you; it's
+created fresh on your machine. It's shown in the "Snag Backend" window right
+after it starts, and saved to `data/auth_token.txt` inside your Snag folder.
 
-1. Open a job application page, click the Snag icon to activate
-2. The sidebar shows detected fields — simple ones (name, email, etc.) fill
-   automatically; **sensitive fields** (work authorization, visa, gender, DOB)
-   show up as a suggestion you have to approve, never auto-filled
-3. Click a question under **Questions** to generate a draft answer
-4. **Accept**, **Edit** (then Accept), **Regenerate**, or **Skip** — nothing is
-   saved to memory until you Accept (edited or as-is)
-5. Snag never submits the application for you — you still click Submit yourself
+1. Right-click the Snag icon in Chrome → **Options**
+2. Paste the token into **Backend Auth Token**
+3. Pick your LLM provider (Ollama for fully-local, or paste an API key for
+   OpenAI/Anthropic/Groq)
+4. Click **Save**
 
-The more questions you accept across different applications, the better future
-answers get — Snag looks for similar past questions (even worded differently,
-even for a different company) and adapts them instead of starting from scratch.
+To check it worked: open the Snag sidebar (click the icon) on any page — if
+the status badge at the top says **Live**, you're connected.
 
-## Please test with at least 3 real applications
+## First application — step by step
 
-Try a few different sites if you can, and note anything that felt off —
-wrong answer, field it couldn't fill, something confusing. Then fill out
-[FEEDBACK.md](./FEEDBACK.md).
+1. Open a real job application page
+2. Click the Snag icon — the sidebar opens and scans the page
+3. Simple fields (name, email, etc.) fill in automatically
+4. Under **Questions**, click one to generate a draft answer
+5. Read it. Click **Accept** if it's good, **Edit** to fix it first, or
+   **Regenerate** for a different draft, or **Skip** to leave it for later
+6. Repeat for each question
+7. Review the whole form yourself, then click **Submit** on the page — Snag
+   does not do this step for you
 
-## Privacy — what actually happens to your data
+## Using Snag
 
-- Your profile, resume, and approved answers are stored **locally, unencrypted**
-  (a SQLite file on your own machine). Anyone with access to this computer/OS
-  account could read them — use it on a machine you trust.
-- Nothing is sent to the person who built Snag, or to any Snag-run server —
-  there isn't one.
-- If you use a cloud LLM provider (OpenAI/Anthropic/Groq/anything other than
-  Ollama), your questions, profile, and job context **are** sent to that
-  provider's API to generate answers. Ollama is the only fully-local option.
-- Snag never auto-submits an application.
+- **Detecting fields** happens automatically when you open the sidebar on a
+  page with a form
+- **Generating answers** happens when you click a question under Questions
+- **Editing** an answer before accepting keeps your edit, not the original draft
+- **Approving/filling** writes the field only after you click Accept (or
+  Edit → Accept) — nothing is filled without your say-so
+- **Memory**: once you Accept an answer, Snag remembers it. A similar question
+  later — even worded differently, even for a different company — can reuse
+  and adapt it instead of starting from scratch. You can view, edit, or delete
+  anything Snag has learned from the memory icon (top of the sidebar)
+- **Resume import**: in the Profile section, upload a resume (`.pdf`/`.txt`)
+  to pre-fill fields — you still review and approve what it extracted before
+  it's saved to your profile
+
+## Important privacy note
+
+- Your profile, resume, and approved answers are stored **locally on your own
+  computer, and they are not encrypted**. Anyone with access to this computer
+  (or this Windows/Mac user account) could read that data — only use Snag on
+  a machine you trust.
+- Nothing is sent to whoever gave you this pilot build, or to any Snag-run
+  server — there isn't one.
+- If you choose a cloud LLM provider (OpenAI, Anthropic, Groq — anything other
+  than Ollama), your questions, profile, and job context **are sent to that
+  provider's servers** to generate answers. Ollama is the only option that
+  keeps everything fully on your own machine.
+- The in-app "Feedback" button in the sidebar won't work in this pilot build
+  (it's not configured with anywhere to send to) — please use `FEEDBACK.md`
+  instead.
 
 ## Troubleshooting
 
-- **"Unauthorized"/401 errors**: your token doesn't match — re-check
-  `logs/snag.log` for the current one and re-paste it into Settings.
-- **Port already in use**: another Snag instance (or something else) is on
-  port 8765 — close it or check `netstat` for what's holding it.
-- **Ollama not reachable**: `start.py` warns but doesn't block — make sure
-  `ollama serve` is running if you picked that provider.
-- **Resume didn't extract anything**: only `.pdf`/`.txt`/`.md` are supported,
-  and scanned/image-only PDFs won't extract text (no OCR).
-- **A field/radio button didn't fill**: Snag doesn't yet reason about
-  multi-choice questions rendered as several radio buttons as one decision —
-  you may need to pick that one manually. Note it in your feedback either way.
-- Something else broken: note the exact error/behavior for your feedback —
-  that's exactly what this pilot is for.
+**Backend won't start**
+Check the "Snag Backend" window for the actual error and share it in your
+feedback. Common cause: Python isn't installed — see the error message for
+a link.
 
-## Checklist
+**Extension can't connect / status badge says "Offline"**
+Make sure you ran Start-Snag (Windows) / Start-Snag.command (Mac) and it said
+"started successfully" — the extension needs that running the whole time
+you're using Snag.
 
-- [ ] Backend running (`python start.py`), extension loaded, token pasted in
-- [ ] Profile filled in (resume import or manual)
-- [ ] Tested on at least 3 real applications
-- [ ] Tried at least one Accept, one Edit→Accept, one Skip
-- [ ] Filled out [FEEDBACK.md](./FEEDBACK.md)
+**Token rejected**
+Copy the token again from the "Snag Backend" window or `data/auth_token.txt`
+— make sure there's no extra space before/after it, and paste the whole thing.
+
+**Chrome extension not appearing**
+Make sure you selected the `extension` folder itself (not a parent folder) in
+"Load unpacked", and that Developer mode is on.
+
+**Application fields not detected**
+Some pages load slowly or use unusual form structures — try reloading the
+page and reopening the sidebar. If a field is still never detected, note the
+site and field in your feedback.
+
+**AI answer generation fails / spins forever**
+If you're using Ollama, make sure it's running (`ollama serve`) with a model
+pulled. If using a cloud provider, double check the API key in Options. Note
+the exact error message in your feedback.
+
+**"Snag is already running" but nothing works**
+Double-click Stop-Snag (bat/command), then Start-Snag again.
+
+**Windows SmartScreen warning ("Windows protected your PC")**
+Click "More info" → "Run anyway". This appears for any unsigned script from
+an unknown publisher — it's expected for a pilot build, not a sign of a
+problem with Snag specifically.
+
+**macOS "cannot be opened because the developer cannot be verified"**
+Right-click (or Control-click) the `.command` file → Open → confirm. Same
+reason as the Windows warning above — normal for an unsigned script.
+
+**Something else broke**
+Note exactly what you did, what you expected, and what happened instead —
+that's the most useful kind of feedback for this pilot.
+
+## Feedback
+
+Please fill out [FEEDBACK.md](./FEEDBACK.md) after trying Snag on a few real
+applications, and send it back to whoever gave you this pilot build.
