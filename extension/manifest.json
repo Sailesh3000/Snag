@@ -1,15 +1,25 @@
 {
   "manifest_version": 3,
   "name": "Snag",
-  "version": "0.2.0",
-  "description": "AI-powered job application copilot. Bring your own API key.",
-  "permissions": ["activeTab", "storage", "scripting", "alarms"],
-  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "version": "0.3.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvey/gYAszIYARuBqt7gFXuAMzTNlrRcxBAUKtwA3kZG9jeB3jm374eq+9s0VG7nfNZEIoOoEgnyqvTlp7LSvi2a4oBzJ+i/36oB7ZZ8FMZaL8SdiiVZJ4Za9Png2A5+GONJ12EhiDb8n2BWgHxdpxUpaTz8AG00NokWdVIm54vVAlwRhD9wOy9wVMg+5UewNIPQ+h+YDNT8mkCgoUSSyFrjbZQ+t8EnuiUYfPuth1N7bp4lN6Cu7dUbaZpzEMaDP/y38sNUXGWrPkE+zTnu5YKb2xWZXGGhGQvYyhJbxrmHHWVsfIacenfFqW7sMdOMvvgzTbPfPAxvBZR+w0nZpuQIDAQAB",
+  "description": "AI job application copilot. Your profile and past answers stay on this device; AI answers come from your Snag subscription.",
+  "permissions": ["activeTab", "storage", "scripting", "alarms", "identity", "unlimitedStorage"],
+  "host_permissions": [
+    "https://*.amazoncognito.com/*",
+    "https://*.execute-api.us-east-1.amazonaws.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://api.groq.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
   "background": {
     "service_worker": "background/index.js",
     "type": "module"
   },
-  "options_page": "settings/index.html",
   "options_ui": {
     "page": "settings/index.html",
     "open_in_tab": true
@@ -23,14 +33,16 @@
   "action": {
     "default_title": "Snag — Click to toggle sidebar",
     "default_icon": {
-      "16": "icons/16.svg",
-      "48": "icons/48.svg",
-      "128": "icons/128.svg"
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
     }
   },
   "icons": {
-    "16": "icons/16.svg",
-    "48": "icons/48.svg",
-    "128": "icons/128.svg"
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
   }
 }
