@@ -7,6 +7,7 @@
   "permissions": ["activeTab", "storage", "scripting", "alarms", "identity", "unlimitedStorage"],
   "host_permissions": [
     "https://*.amazoncognito.com/*",
+    "https://*.execute-api.ap-south-1.amazonaws.com/*",
     "https://*.execute-api.us-east-1.amazonaws.com/*"
   ],
   "optional_host_permissions": [

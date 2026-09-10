@@ -44,8 +44,15 @@ infra/
 cd infra
 python app.py            # entrypoint (used by cdk)
 cdk synth                # emit CloudFormation to cdk.out/ (no AWS creds needed)
-cdk deploy               # deploy (needs AWS creds; prompts for the ExtensionCallbackUrl)
+cdk deploy               # deploy (needs AWS creds; ExtensionCallbackUrl has a dev default)
 ```
+
+> **Full end-to-end walkthrough** (first deploy, region opt-in, venv
+> gotchas, post-deploy wiring, smoke test, re-deploys, CI/CD,
+> troubleshooting): **[`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md)**.
+> Note: `npx cdk` must run with the repo venv's `python` on `PATH`
+> (activate the venv first), and `ap-south-1` requires a one-time
+> region opt-in.
 
 ## Secrets (set out-of-band, never in CI)
 
