@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC -> AWS deploy role (no long-lived AWS keys in CI)
+
+jobs:
+  test:
+    name: Tests + synth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-paths: |
+            extension/package-lock.json
+            ui/package-lock.json
+
+      - name: Install Python deps
+        run: python -m pip install --upgrade pip -r backend/requirements.txt -r infra/requirements.txt
+
+      - name: Python tests (backend + infra)
+        run: python -m pytest -q
+
+      - name: Build extension + run vitest
+        working-directory: extension
+        run: |
+          npm ci
+          npm run build
+          npx vitest run
+
+      - name: Build sidebar UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk@2
+
+      - name: cdk synth
+        working-directory: infra
+        run: npx cdk synth -q
+
+  deploy:
+    name: Deploy to AWS (main)
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Install CDK deps + CLI
+        run: |
+          python -m pip install --upgrade pip -r infra/requirements.txt
+          npm install -g aws-cdk@2
+
+      - name: cdk deploy
+        working-directory: infra
+        env:
+          CALLBACK_URL: ${{ secrets.EXTENSION_CALLBACK_URL }}
+        run: |
+          if [ -n "$CALLBACK_URL" ]; then
+            npx cdk deploy --require-approval never \
+              --parameters "{\"ExtensionCallbackUrl\": \"$CALLBACK_URL\"}"
+          else
+            npx cdk deploy --require-approval never
+          fi
+
+  release:
+    name: Build extension release zip
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-paths: |
+            extension/package-lock.json
+            ui/package-lock.json
+
+      - name: Build sidebar UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Place sidebar build into extension
+        run: |
+          rm -rf extension/sidebar
+          mkdir -p extension/sidebar
+          cp -r ui/build/. extension/sidebar/
+
+      - name: Build extension + run vitest (release gate)
+        working-directory: extension
+        run: |
+          npm ci
+          npm run build
+          npx vitest run
+
+      - name: Zip extension
+        run: |
+          VERSION=$(node -p "require('./extension/manifest.json').version")
+          cd extension
+          zip -qr "../snag-extension-v${VERSION}.zip" . \
+            -x "node_modules/*" "src/*" "package.json" "package-lock.json" \
+               "tsconfig.json" "vitest.config.ts" "*.ts"
+          cd ..
+          ls -lh "snag-extension-v${VERSION}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snag-extension
+          path: snag-extension-v*.zip
+          retention-days: 30
