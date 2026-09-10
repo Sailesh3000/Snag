@@ -1,318 +1,509 @@
-import { getSettings, getBackendWsUrl, getBackendHttpUrl } from "../shared/config.js";
-import { llmGenerate, llmGenerateStream } from "../llm/client.js";
+// Snag background service worker — local orchestration (plan B3).
+//
+// The retired local FastAPI backend used to do four things for the
+// extension: (1) classify detected form fields and match them against the
+// profile, (2) assemble the answer-generation prompt context (profile +
+// similar past answers), (3) instruct the content script to write an
+// approved answer into the DOM, and (4) persist approved answers into
+// memory. All of that now runs here against the local IndexedDB — the only
+// network calls left are the three API endpoints in shared/api.ts
+// (/api/me, /api/answer/generate, /api/embed).
+//
+// Message flow (unchanged from the pilot, new transport):
+//   sidebar iframe --postMessage--> content script --runtime--> background
+//   background     --tabs.sendMessage--> content script --forwardToSidebar--> sidebar
+//
+// The sidebar never sees tokens; it gets `publicSession` (sub/email only)
+// plus subscription status from /api/me.
 
-interface TabSession {
-  sessionId: string;
-  ws: WebSocket;
+import {
+  apiEmbed,
+  apiGenerateAnswer,
+  apiMe,
+  ApiError,
+  AuthError,
+  RateLimitedError,
+  SubscriptionRequiredError,
+} from "../shared/api.js";
+import { getSession, isFresh, refreshSession, signOut, startSignIn, type Session } from "../shared/auth.js";
+import { classifyFields, matchStaticFields, type FieldInfo } from "../classify.js";
+import { ANSWER_SYSTEM, buildAnswerPrompt, detectQuestionType, type MemoryEntry } from "../shared/prompt.js";
+import { buildCheckoutUrl } from "../shared/pricing.js";
+import { findSimilar } from "../similarity.js";
+import { deleteAnswer, getAnswers, getProfile, saveAnswer, setProfileField, updateAnswer } from "../storage/db.js";
+
+interface RuntimeMessage {
+  type: string;
+  payload?: Record<string, unknown>;
 }
 
-const tabSessions = new Map<number, TabSession>();
+interface PageContext {
+  url: string;
+  company: string;
+  role: string;
+  jobDescription: string;
+}
+
+interface PendingApproval {
+  tabId: number;
+  question: string;
+  value: string;
+  company: string;
+  role: string;
+  original?: string;
+}
+
+interface SubscriptionInfo {
+  status: string;
+  currentPeriodEnd: string | null;
+}
+
 const activeTabs = new Set<number>();
-const pendingContexts = new Map<string, { tabId: number; company: string; role: string; question: string; fieldId: string }>();
-const pendingResumeContexts = new Map<string, { tabId: number }>();
+const pageContexts = new Map<number, PageContext>();
+// fill:approve -> data needed to persist the answer once the content script
+// confirms the DOM write actually succeeded (fill:result). Memory is only
+// ever saved for fills that actually landed.
+const pendingApprovals = new Map<string, PendingApproval>();
 
-async function pingBackendHealth() {
-  const settings = await getSettings();
-  const httpUrl = getBackendHttpUrl(settings);
-  let online = false;
+function sendToTab(tabId: number, message: RuntimeMessage): void {
+  chrome.tabs.sendMessage(tabId, message).catch(() => {});
+}
+
+// Tokens never leave the service worker; pages get a reduced view.
+function publicSession(session: Session | null) {
+  return session ? { sub: session.sub, email: session.email, expiresAt: session.expiresAt } : null;
+}
+
+// --- subscription status ----------------------------------------------------
+
+async function fetchSubscription(): Promise<SubscriptionInfo | null> {
   try {
-    const resp = await fetch(`${httpUrl}/health`, { signal: AbortSignal.timeout(5000) });
-    if (resp.ok) online = true;
-  } catch {}
-  for (const tabId of activeTabs) {
-    chrome.tabs.sendMessage(tabId, {
-      type: "backend:status",
-      payload: { online },
-    }).catch(() => {});
+    const me = await apiMe();
+    return { status: me.subscriptionStatus, currentPeriodEnd: me.currentPeriodEnd ?? null };
+  } catch {
+    return null;
   }
 }
 
-chrome.alarms.create("snag-health-ping", { periodInMinutes: 0.5 });
+async function pushAuthUpdate(tabId?: number, error?: string): Promise<void> {
+  const session = await getSession();
+  const subscription = session ? await fetchSubscription() : null;
+  const payload: Record<string, unknown> = { session: publicSession(session), subscription };
+  if (error) payload.error = error;
+  const message: RuntimeMessage = { type: "auth:updated", payload };
+  if (tabId !== undefined) sendToTab(tabId, message);
+  else for (const t of activeTabs) sendToTab(t, message);
+}
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "snag-health-ping") {
-    pingBackendHealth();
+// --- error mapping (plan B4: distinct 402 / 429 / auth UI states) -----------
+
+type AnswerErrorCode = "auth" | "subscription_required" | "rate_limited" | "error";
+
+function errorCodeFor(e: unknown): AnswerErrorCode {
+  if (e instanceof SubscriptionRequiredError) return "subscription_required";
+  if (e instanceof RateLimitedError) return "rate_limited";
+  if (e instanceof ApiError) return "error";
+  if (e instanceof AuthError) return "auth";
+  return "error";
+}
+
+const ERROR_MESSAGES: Record<AnswerErrorCode, string> = {
+  subscription_required: "Your subscription isn't active. Subscribe to generate answers.",
+  rate_limited: "You've hit today's usage limit. Try again tomorrow.",
+  auth: "You're signed out or your session expired. Sign in again to continue.",
+  error: "Couldn't generate an answer. Check your connection and try again.",
+};
+
+// --- page scan ---------------------------------------------------------------
+
+async function handlePageUpdate(tabId: number, payload: Record<string, unknown>): Promise<void> {
+  const fields = (payload.fields || []) as FieldInfo[];
+  pageContexts.set(tabId, {
+    url: (payload.url as string) || "",
+    company: (payload.company as string) || "",
+    role: (payload.jobTitle as string) || "",
+    jobDescription: (payload.jobDescription as string) || "",
+  });
+
+  const classifications = classifyFields(fields);
+  const profile = await getProfile();
+  const { autoFills, sensitiveSuggestions } = matchStaticFields(fields, profile);
+
+  const categoryCounts: Record<string, number> = {};
+  for (const c of classifications) categoryCounts[c.category] = (categoryCounts[c.category] || 0) + 1;
+
+  sendToTab(tabId, {
+    type: "status:update",
+    payload: { fieldCount: fields.length, staticMatchCount: autoFills.length, categoryCounts },
+  });
+  sendToTab(tabId, { type: "fields:classified", payload: { classifications } });
+  if (sensitiveSuggestions.length > 0) {
+    sendToTab(tabId, { type: "static:suggestions", payload: { suggestions: sensitiveSuggestions } });
   }
-});
-
-async function createSession(tabId: number): Promise<TabSession> {
-  const settings = await getSettings();
-  const baseUrl = getBackendWsUrl(settings);
-  const sessionId = `ses_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  // The browser WebSocket API can't set custom headers, so the auth token
-  // (backend/auth.py) travels as a query param instead. This only leaves the
-  // service-worker/background context, which page-level content scripts and
-  // arbitrary web pages never see.
-  const tokenParam = settings.authToken ? `?token=${encodeURIComponent(settings.authToken)}` : "";
-  const ws = new WebSocket(`${baseUrl}/ws/${sessionId}${tokenParam}`);
-
-  ws.onopen = () => {
-    console.log(`[Snag] WS connected: ${sessionId}`);
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data);
-      handleBackendMessage(tabId, sessionId, msg);
-    } catch (e) {
-      console.error("[Snag] WS parse error:", e);
-    }
-  };
-
-  ws.onclose = () => {
-    console.log(`[Snag] WS disconnected: ${sessionId}`);
-    tabSessions.delete(tabId);
-  };
-
-  const session: TabSession = { sessionId, ws };
-  tabSessions.set(tabId, session);
-  return session;
-}
-
-function getSession(tabId: number): TabSession | undefined {
-  return tabSessions.get(tabId);
-}
-
-function sendToBackend(tabId: number, message: object) {
-  const session = getSession(tabId);
-  if (session && session.ws.readyState === WebSocket.OPEN) {
-    session.ws.send(JSON.stringify(message));
-  }
-}
-
-async function handleBackendMessage(tabId: number, sessionId: string, msg: { type: string; payload: Record<string, unknown> }) {
-  if (msg.type === "answer:context") {
-    const ctx = pendingContexts.get(sessionId);
-    if (ctx) {
-      pendingContexts.delete(sessionId);
-      await callLLMDirectly(tabId, sessionId, msg.payload, ctx);
-      return;
-    }
-  }
-
-  if (msg.type === "resume:context") {
-    const ctx = pendingResumeContexts.get(sessionId);
-    if (ctx) {
-      pendingResumeContexts.delete(sessionId);
-      await extractResumeFieldsDirectly(tabId, msg.payload);
-      return;
-    }
-  }
-
-  // Forward all other messages to content script
-  chrome.tabs.sendMessage(tabId, msg).catch(() => {});
-}
-
-interface ExtractedResumeFields {
-  first_name: string; last_name: string; email: string; phone: string;
-  city: string; state: string; country: string;
-  linkedin: string; github: string; portfolio: string;
-  education: string[]; experience: string[]; skills: string[];
-}
-
-export function parseResumeExtractionJson(raw: string): ExtractedResumeFields {
-  // Models sometimes wrap JSON in ```json ... ``` despite instructions not to.
-  const stripped = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  const parsed = JSON.parse(stripped);
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("Model did not return a JSON object");
-  }
-  return parsed as ExtractedResumeFields;
-}
-
-async function extractResumeFieldsDirectly(tabId: number, context: Record<string, unknown>) {
-  const settings = await getSettings();
-  const systemPrompt = context.systemPrompt as string;
-  const prompt = context.prompt as string;
-
-  try {
-    const raw = await llmGenerate(systemPrompt, prompt, settings);
-    const fields = parseResumeExtractionJson(raw);
-    chrome.tabs.sendMessage(tabId, {
-      type: "resume:extracted",
-      payload: { fields, error: null },
-    }).catch(() => {});
-  } catch (e) {
-    chrome.tabs.sendMessage(tabId, {
-      type: "resume:extracted",
-      payload: { fields: null, error: `Couldn't extract profile fields: ${e}` },
-    }).catch(() => {});
+  // Non-sensitive static matches are auto-filled (the content script applies
+  // them and reports back a fill:execute per field, which we re-emit as
+  // fill:executed for the sidebar).
+  if (autoFills.length > 0) {
+    sendToTab(tabId, { type: "profile:fills", payload: { fills: autoFills } });
   }
 }
 
-async function callLLMDirectly(
+// --- answer generation -------------------------------------------------------
+
+function sendErrorDraft(
   tabId: number,
-  sessionId: string,
-  context: Record<string, unknown>,
-  original: { company: string; role: string; question: string; fieldId: string },
-) {
-  const settings = await getSettings();
-  const systemPrompt = context.systemPrompt as string;
-  const prompt = context.prompt as string;
+  base: { fieldId: string; question: string; company: string; role: string; questionType: string },
+  errorCode: AnswerErrorCode,
+): void {
+  sendToTab(tabId, {
+    type: "answer:draft",
+    payload: {
+      ...base,
+      draft: "",
+      error: ERROR_MESSAGES[errorCode],
+      errorCode,
+      confidence: 0,
+      profileUsed: [],
+      memoryCount: 0,
+    },
+  });
+}
 
-  // Try streaming first, fall back to non-streaming
+async function handleAnswerGenerate(tabId: number, payload: Record<string, unknown>): Promise<void> {
+  const fieldId = (payload.fieldId as string) || "";
+  const question = (payload.question as string) || "";
+  const pageCtx = pageContexts.get(tabId) || { url: "", company: "", role: "", jobDescription: "" };
+  const company = (payload.company as string) || pageCtx.company;
+  const role = (payload.role as string) || pageCtx.role;
+  const fallbackType = (payload.questionType as string) || "general";
+  const base = { fieldId, question, company, role };
+
+  const session = await getSession();
+  if (!session) {
+    sendErrorDraft(tabId, { ...base, questionType: fallbackType }, "auth");
+    return;
+  }
+
   try {
+    const profile = await getProfile();
+    const answers = await getAnswers();
+
+    // Semantic memory lookup needs a query embedding, which costs one gated
+    // /api/embed call — skip it entirely when there's nothing to match yet.
+    let memories: MemoryEntry[] = [];
+    if (answers.some((a) => a.embedding && a.embedding.length > 0)) {
+      const queryEmbedding = await apiEmbed(question);
+      memories = findSimilar(queryEmbedding, answers, 3, 0.3, company, role).map((m) => ({
+        id: m.id,
+        score: m.score,
+        payload: m.payload,
+      }));
+    }
+
+    const { prompt, questionType } = buildAnswerPrompt({
+      question,
+      profile,
+      memories,
+      jobDescription: pageCtx.jobDescription,
+      company,
+      role,
+    });
+
     let fullText = "";
-    await llmGenerateStream(systemPrompt, prompt, settings, {
+    await apiGenerateAnswer({
+      systemPrompt: ANSWER_SYSTEM,
+      prompt,
+      question,
+      company,
+      role,
+      questionType,
       onChunk: (chunk) => {
         fullText += chunk;
-        chrome.tabs.sendMessage(tabId, {
-          type: "answer:stream",
-          payload: { fieldId: original.fieldId, chunk, partial: fullText },
-        }).catch(() => {});
+        sendToTab(tabId, { type: "answer:stream", payload: { fieldId, chunk, partial: fullText } });
       },
-      onDone: () => {
-        // Note: the draft is NOT saved to memory here. It's only a suggestion
-        // until the user accepts/edits+accepts it via the review UI, which
-        // triggers a "fill:approve" (or "answer:edit") message that the
-        // backend persists as approved memory.
-        chrome.tabs.sendMessage(tabId, {
-          type: "answer:draft",
-          payload: {
-            fieldId: original.fieldId,
-            question: original.question,
-            draft: fullText,
-            error: null,
-            questionType: context.questionType,
-            company: original.company || context.company,
-            role: original.role || context.role,
-            confidence: fullText.length > 20 ? 0.7 : 0.3,
-            profileUsed: context.profileUsed,
-            memoryCount: context.memoryCount,
-          },
-        }).catch(() => {});
-      },
-      onError: (error) => {
-        console.error("[Snag] LLM error:", error);
-        chrome.tabs.sendMessage(tabId, {
-          type: "answer:draft",
-          payload: {
-            fieldId: original.fieldId,
-            question: original.question,
-            draft: "",
-            error: `LLM generation failed: ${error}`,
-            questionType: context.questionType,
-            company: original.company,
-            role: original.role,
-            confidence: 0,
-            profileUsed: [],
-            memoryCount: 0,
-          },
-        }).catch(() => {});
+    });
+
+    // The draft is NOT saved to memory here. It becomes memory only when the
+    // user accepts it (fill:approve) and the content script confirms the DOM
+    // write (fill:result) — see handleFillResult.
+    sendToTab(tabId, {
+      type: "answer:draft",
+      payload: {
+        ...base,
+        draft: fullText,
+        error: null,
+        questionType,
+        confidence: fullText.length > 20 ? 0.7 : 0.3,
+        profileUsed: Object.keys(profile),
+        memoryCount: memories.length,
       },
     });
   } catch (e) {
-    console.error("[Snag] LLM stream failed, trying non-streaming:", e);
-    try {
-      const result = await llmGenerate(systemPrompt, prompt, settings);
-      chrome.tabs.sendMessage(tabId, {
-        type: "answer:draft",
-        payload: {
-          fieldId: original.fieldId,
-          question: original.question,
-          draft: result,
-          error: null,
-          questionType: context.questionType,
-          company: original.company || context.company,
-          role: original.role || context.role,
-          confidence: result.length > 20 ? 0.7 : 0.3,
-          profileUsed: context.profileUsed,
-          memoryCount: context.memoryCount,
-        },
-      }).catch(() => {});
-    } catch (e2) {
-      chrome.tabs.sendMessage(tabId, {
-        type: "answer:draft",
-        payload: {
-          fieldId: original.fieldId,
-          question: original.question,
-          draft: "",
-          error: `LLM generation failed: ${e2}`,
-          questionType: context.questionType,
-          company: original.company,
-          role: original.role,
-          confidence: 0,
-          profileUsed: [],
-          memoryCount: 0,
-        },
-      }).catch(() => {});
-    }
+    console.error("[Snag] answer generation failed:", e);
+    sendErrorDraft(tabId, { ...base, questionType: fallbackType }, errorCodeFor(e));
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender) => {
-  const tabId = sender.tab?.id;
-  if (!tabId) return;
+// --- fills -------------------------------------------------------------------
 
-  if (message.type === "deactivate") return;
-
-  let session = getSession(tabId);
-
-  if (message.type === "answer:generate") {
-    // Intercept answer generation: request context from backend, then call LLM directly
-    if (!session) {
-      createSession(tabId).then((s) => {
-        const payload = message.payload || {};
-        pendingContexts.set(s.sessionId, {
-          tabId,
-          company: payload.company || "",
-          role: payload.role || "",
-          question: payload.question || "",
-          fieldId: payload.fieldId || "",
-        });
-        s.ws.addEventListener("open", () => {
-          s.ws.send(JSON.stringify(message));
-        }, { once: true });
-      });
-      return;
-    }
-
-    const payload = message.payload || {};
-    pendingContexts.set(session.sessionId, {
-      tabId,
-      company: payload.company || "",
-      role: payload.role || "",
-      question: payload.question || "",
-      fieldId: payload.fieldId || "",
+async function persistApprovedAnswer(pending: PendingApproval): Promise<void> {
+  // The embedding is best-effort: if the subscription lapses or the embed
+  // quota is hit, the answer is still saved — just without a vector for
+  // future semantic matching.
+  let embedding: number[] | null = null;
+  try {
+    embedding = await apiEmbed(pending.question);
+  } catch {
+    embedding = null;
+  }
+  try {
+    await saveAnswer({
+      question: pending.question,
+      answer: pending.value,
+      company: pending.company,
+      role: pending.role,
+      questionType: detectQuestionType(pending.question),
+      originalAnswer: pending.original,
+      embedding,
     });
-    sendToBackend(tabId, message);
-    return;
+  } catch (e) {
+    console.error("[Snag] failed to save answer memory:", e);
   }
+}
 
-  if (message.type === "resume:extract") {
-    // Same intercept-then-call-LLM-directly pattern as answer:generate.
-    if (!session) {
-      createSession(tabId).then((s) => {
-        pendingResumeContexts.set(s.sessionId, { tabId });
-        s.ws.addEventListener("open", () => {
-          s.ws.send(JSON.stringify(message));
-        }, { once: true });
+async function handleFillApprove(tabId: number, payload: Record<string, unknown>): Promise<void> {
+  const requestId = (payload.requestId as string) || "";
+  const question = (payload.question as string) || "";
+  const value = (payload.value as string) || "";
+  const pageCtx = pageContexts.get(tabId);
+  const company = (payload.company as string) || pageCtx?.company || "";
+  const role = (payload.role as string) || pageCtx?.role || "";
+
+  // Instruct the content script to write the value into the DOM; the result
+  // comes back as fill:result, which is where the answer gets persisted.
+  sendToTab(tabId, {
+    type: "fill:instruct",
+    payload: { requestId, selector: payload.selector, value, label: question, fieldId: payload.fieldId },
+  });
+
+  if (requestId) {
+    pendingApprovals.set(requestId, { tabId, question, value, company, role, original: payload.original as string | undefined });
+  }
+}
+
+async function handleFillResult(tabId: number, payload: Record<string, unknown>): Promise<void> {
+  const requestId = (payload.requestId as string) || "";
+  const fieldId = (payload.fieldId as string) || "";
+  const success = !!payload.success;
+  sendToTab(tabId, { type: "fill:executed", payload: { fieldId, success, reason: payload.reason } });
+
+  if (success && requestId) {
+    const pending = pendingApprovals.get(requestId);
+    pendingApprovals.delete(requestId);
+    if (pending) await persistApprovedAnswer(pending);
+  }
+}
+
+// --- message dispatcher ------------------------------------------------------
+
+export function handleRuntimeMessage(message: RuntimeMessage, sender: { tab?: { id?: number } }): void {
+  const tabId = sender.tab?.id;
+  if (tabId === undefined) return; // options page etc. — nothing to orchestrate
+  const payload = message.payload || {};
+
+  // The content script handles activate/deactivate itself.
+  if (message.type === "activate" || message.type === "deactivate") return;
+
+  switch (message.type) {
+    case "page:update":
+      handlePageUpdate(tabId, payload).catch((e) => console.error("[Snag] page:update failed:", e));
+      return;
+
+    case "answer:generate":
+      handleAnswerGenerate(tabId, payload).catch((e) => console.error("[Snag] answer:generate failed:", e));
+      return;
+
+    case "fill:approve":
+      handleFillApprove(tabId, payload).catch((e) => console.error("[Snag] fill:approve failed:", e));
+      return;
+
+    case "fill:result":
+      handleFillResult(tabId, payload).catch((e) => console.error("[Snag] fill:result failed:", e));
+      return;
+
+    case "fill:preview":
+      sendToTab(tabId, message);
+      return;
+
+    case "fill:reject":
+      sendToTab(tabId, { type: "fill:rejected", payload: { fieldId: payload.fieldId } });
+      return;
+
+    // Result of a static auto-fill (profile:fills) — re-emit for the sidebar.
+    case "fill:execute":
+      sendToTab(tabId, {
+        type: "fill:executed",
+        payload: { fieldId: payload.fieldId, success: payload.success, reason: payload.reason },
       });
+      return;
+
+    case "profile:get":
+      getProfile()
+        .then((profile) => sendToTab(tabId, { type: "profile:got", payload: { profile } }))
+        .catch(() => sendToTab(tabId, { type: "profile:got", payload: { profile: {} } }));
+      return;
+
+    case "profile:set": {
+      const key = payload.key as string;
+      const value = payload.value as string;
+      if (!key) return;
+      setProfileField(key, value)
+        .then(() => sendToTab(tabId, { type: "profile:updated", payload: { key, value } }))
+        .catch(() => {});
       return;
     }
 
-    pendingResumeContexts.set(session.sessionId, { tabId });
-    sendToBackend(tabId, message);
-    return;
-  }
+    // Memory management (learned answers live in local IndexedDB).
+    case "memory:answers":
+      getAnswers()
+        .then((answers) =>
+          sendToTab(tabId, {
+            type: "memory:answers:response",
+            payload: {
+              answers: answers.map((a) => ({
+                id: a.id,
+                question: a.question,
+                answer: a.answer,
+                company: a.company,
+                role: a.role,
+                createdAt: a.createdAt,
+              })),
+            },
+          }),
+        )
+        .catch(() => sendToTab(tabId, { type: "memory:answers:response", payload: { answers: [] } }));
+      return;
 
-  // For all other messages, just forward to backend
-  if (!session) {
-    createSession(tabId).then((s) => sendToBackend(tabId, message));
-    return;
+    case "memory:update": {
+      const id = payload.id as string;
+      const answer = payload.answer as string;
+      if (!id) return;
+      updateAnswer(id, answer)
+        .then((ok) => sendToTab(tabId, { type: "memory:updated", payload: { id, ok } }))
+        .catch(() => sendToTab(tabId, { type: "memory:updated", payload: { id, ok: false } }));
+      return;
+    }
+
+    case "memory:delete": {
+      const id = payload.id as string;
+      if (!id) return;
+      deleteAnswer(id)
+        .then((ok) => sendToTab(tabId, { type: "memory:deleted", payload: { id, ok } }))
+        .catch(() => sendToTab(tabId, { type: "memory:deleted", payload: { id, ok: false } }));
+      return;
+    }
+
+    case "resume:extract":
+      // Parked (plan B5): resume extraction needs an LLM call, which in the
+      // published build goes through the subscription-gated backend. It comes
+      // back with the local-model (BYOK) mode.
+      sendToTab(tabId, {
+        type: "resume:extracted",
+        payload: {
+          fields: null,
+          error: "Resume import is coming back with the local-model mode. For now, add your profile fields manually in the Profile section.",
+        },
+      });
+      return;
+
+    case "auth:signIn":
+      startSignIn()
+        .then(() => pushAuthUpdate(tabId))
+        .catch((e) => pushAuthUpdate(tabId, e instanceof Error ? e.message : String(e)));
+      return;
+
+    case "auth:signOut":
+      signOut()
+        .then(() => pushAuthUpdate(tabId))
+        .catch(() => pushAuthUpdate(tabId));
+      return;
+
+    case "auth:status":
+      void (async () => {
+        const session = await getSession();
+        const subscription = session ? await fetchSubscription() : null;
+        sendToTab(tabId, { type: "auth:status", payload: { session: publicSession(session), subscription } });
+      })();
+      return;
+
+    case "auth:checkout":
+      void (async () => {
+        const session = await getSession();
+        if (!session?.sub) return;
+        try {
+          await chrome.tabs.create({ url: buildCheckoutUrl(session.sub) });
+        } catch {}
+      })();
+      return;
+
+    case "api:me":
+      void (async () => {
+        try {
+          const me = await apiMe();
+          sendToTab(tabId, { type: "api:me:response", payload: { ok: true, me } });
+        } catch (e) {
+          const code = errorCodeFor(e);
+          sendToTab(tabId, {
+            type: "api:me:response",
+            payload: { ok: false, errorCode: code, error: e instanceof Error ? e.message : String(e) },
+          });
+        }
+      })();
+      return;
+
+    // Paddle's checkout redirect lands on checkout-done.html; its content
+    // script pings us here for an immediate /api/me re-poll (the 30s alarm is
+    // only the fallback — the webhook can take a few seconds to apply).
+    case "checkout:done":
+      pushAuthUpdate().catch(() => {});
+      return;
+
+    default:
+      // Unknown sidebar messages: keep the pilot's pass-through so the
+      // content script relay stays lossless.
+      sendToTab(tabId, message);
   }
-  sendToBackend(tabId, message);
+}
+
+// --- lifecycle ---------------------------------------------------------------
+
+// Token refresh on the alarm cadence (plan B2): the access token dies in an
+// hour, so refresh proactively while the browser is open, then re-poll
+// /api/me so a Paddle webhook that just landed shows up without a reload.
+chrome.alarms.create("snag-session-refresh", { periodInMinutes: 0.5 });
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== "snag-session-refresh") return;
+  void (async () => {
+    try {
+      const session = await getSession();
+      if (!session) return;
+      if (!isFresh(session)) await refreshSession();
+    } catch {}
+    pushAuthUpdate().catch(() => {});
+  })();
+});
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  handleRuntimeMessage(message as RuntimeMessage, sender);
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  const session = tabSessions.get(tabId);
-  if (session) {
-    pendingContexts.delete(session.sessionId);
-    pendingResumeContexts.delete(session.sessionId);
-    session.ws.close();
-    tabSessions.delete(tabId);
-  }
   activeTabs.delete(tabId);
+  pageContexts.delete(tabId);
+  for (const [rid, pending] of pendingApprovals) {
+    if (pending.tabId === tabId) pendingApprovals.delete(rid);
+  }
 });
 
 chrome.action.onClicked.addListener(async (tab) => {

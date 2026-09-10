@@ -1,15 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-
-const DEFAULT_API_BASE = "http://127.0.0.1:8765/api";
+import { isInIframe, postToBackground } from "../lib/channel";
 
 interface MemoryAnswer {
-  id: number;
+  id: string;
   question: string;
-  final_answer: string;
-  company: string | null;
-  role: string | null;
-  created_at: string;
+  answer: string;
+  company: string;
+  role: string;
+  createdAt: number;
 }
 
 interface MemoryManagerProps {
@@ -18,74 +17,63 @@ interface MemoryManagerProps {
 
 // Minimal "if Snag learned something incorrectly, fix it" screen — not a
 // full memory browser/analytics product. List, edit, delete. That's it.
+// Message-based: learned answers live in the extension's local IndexedDB and
+// the background is the only thing that reads/writes it (plan B3).
 export default function MemoryManager({ onClose }: MemoryManagerProps) {
-  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
-  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
   const [answers, setAnswers] = useState<MemoryAnswer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.local.get("settings", (data: Record<string, unknown>) => {
-        const s = data?.settings as Record<string, string> | undefined;
-        setApiBase(s?.backendUrl
-          ? s.backendUrl.replace(/^ws/, "http").replace(/\/$/, "") + "/api"
-          : DEFAULT_API_BASE);
-        setAuthHeaders(s?.authToken ? { Authorization: `Bearer ${s.authToken}` } : {});
-      });
-    }
+  const refresh = useCallback(() => {
+    postToBackground({ type: "memory:answers" });
   }, []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${apiBase}/memory/answers`, { headers: authHeaders });
-      if (!res.ok) throw new Error(`${res.status}`);
-      setAnswers(await res.json());
-    } catch {
-      setError("Couldn't load memory — is the backend running?");
-    } finally {
-      setLoading(false);
-    }
-  }, [apiBase, authHeaders]);
-
   useEffect(() => {
+    if (!isInIframe) {
+      setLoading(false);
+      return;
+    }
     refresh();
   }, [refresh]);
 
-  const handleSaveEdit = useCallback(async (id: number) => {
-    try {
-      const res = await fetch(`${apiBase}/memory/answers/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ final_answer: editValue }),
-      });
-      if (!res.ok) throw new Error();
-      setAnswers((prev) => prev.map((a) => (a.id === id ? { ...a, final_answer: editValue } : a)));
-      setEditingId(null);
-    } catch {
-      setError("Couldn't save the edit.");
+  useEffect(() => {
+    if (!isInIframe) return;
+    function onMessage(event: MessageEvent) {
+      if (event.data?.source !== "snag" || !event.data?.msg) return;
+      const msg = event.data.msg as { type: string; payload?: Record<string, unknown> };
+      if (msg.type === "memory:answers:response") {
+        setAnswers((msg.payload?.answers as MemoryAnswer[]) || []);
+        setLoading(false);
+      } else if (msg.type === "memory:updated") {
+        if (!msg.payload?.ok) setError("Couldn't save the edit.");
+        setEditingId(null);
+      } else if (msg.type === "memory:deleted") {
+        if (msg.payload?.ok) {
+          setAnswers((prev) => prev.filter((a) => a.id !== msg.payload?.id));
+        } else {
+          setError("Couldn't delete the entry.");
+        }
+        setDeletingId(null);
+      }
     }
-  }, [apiBase, authHeaders, editValue]);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
-  const handleDelete = useCallback(async (id: number) => {
-    try {
-      const res = await fetch(`${apiBase}/memory/answers/${id}`, {
-        method: "DELETE",
-        headers: authHeaders,
-      });
-      if (!res.ok) throw new Error();
-      setAnswers((prev) => prev.filter((a) => a.id !== id));
-      setDeletingId(null);
-    } catch {
-      setError("Couldn't delete the entry.");
-    }
-  }, [apiBase, authHeaders]);
+  const handleSaveEdit = useCallback(
+    (id: string) => {
+      postToBackground({ type: "memory:update", payload: { id, answer: editValue } });
+      setAnswers((prev) => prev.map((a) => (a.id === id ? { ...a, answer: editValue } : a)));
+    },
+    [editValue],
+  );
+
+  const handleDelete = useCallback((id: string) => {
+    postToBackground({ type: "memory:delete", payload: { id } });
+  }, []);
 
   return (
     <AnimatePresence>
@@ -186,10 +174,10 @@ export default function MemoryManager({ onClose }: MemoryManagerProps) {
                     </>
                   ) : (
                     <>
-                      <p className="text-[11px] text-gray-300 leading-relaxed whitespace-pre-wrap mb-1.5">{a.final_answer}</p>
+                      <p className="text-[11px] text-gray-300 leading-relaxed whitespace-pre-wrap mb-1.5">{a.answer}</p>
                       <div className="flex gap-1.5">
                         <button
-                          onClick={() => { setEditingId(a.id); setEditValue(a.final_answer); }}
+                          onClick={() => { setEditingId(a.id); setEditValue(a.answer); }}
                           className="flex-1 text-[10px] font-semibold px-2 py-1 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
                         >
                           Edit

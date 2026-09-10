@@ -10,6 +10,10 @@ export type FieldAnswerStatus =
   | "fill_failed"
   | "skipped";
 
+/** Why generation failed — drives distinct error UI (plan B4): 402 gets a
+ *  checkout CTA, 429 gets a "come back tomorrow", auth gets sign-in. */
+export type AnswerErrorCode = "auth" | "subscription_required" | "rate_limited" | "error";
+
 export interface FieldAnswerState {
   fieldId: string;
   question: string;
@@ -24,6 +28,7 @@ export interface FieldAnswerState {
   streamingText: string;
   status: FieldAnswerStatus;
   error?: string;
+  errorCode?: AnswerErrorCode;
   fillFailReason?: string;
   /** Where this card's draft came from — a static_suggestion (e.g. work
    * authorization) is a direct profile value, not an LLM generation, so
@@ -50,9 +55,12 @@ interface AnswerCardsProps {
   onSkip: (fieldId: string) => void;
   onFillManually: (fieldId: string) => void;
   onRegenerate: (fieldId: string, question: string) => void;
+  /** 402 error cards offer a checkout CTA; auth error cards offer sign-in. */
+  onCheckout?: () => void;
+  onSignIn?: () => void;
 }
 
-export default function AnswerCards({ answers, onAccept, onSkip, onFillManually, onRegenerate }: AnswerCardsProps) {
+export default function AnswerCards({ answers, onAccept, onSkip, onFillManually, onRegenerate, onCheckout, onSignIn }: AnswerCardsProps) {
   if (!answers || answers.length === 0) return null;
 
   return (
@@ -66,6 +74,8 @@ export default function AnswerCards({ answers, onAccept, onSkip, onFillManually,
             onSkip={onSkip}
             onFillManually={onFillManually}
             onRegenerate={onRegenerate}
+            onCheckout={onCheckout}
+            onSignIn={onSignIn}
           />
         ))}
       </AnimatePresence>
@@ -79,12 +89,16 @@ function AnswerCard({
   onSkip,
   onFillManually,
   onRegenerate,
+  onCheckout,
+  onSignIn,
 }: {
   answer: FieldAnswerState;
   onAccept: (fieldId: string, finalText: string, wasEdited: boolean) => void;
   onSkip: (fieldId: string) => void;
   onFillManually: (fieldId: string) => void;
   onRegenerate: (fieldId: string, question: string) => void;
+  onCheckout?: () => void;
+  onSignIn?: () => void;
 }) {
   const [draft, setDraft] = useState(answer.draft);
   const [editing, setEditing] = useState(false);
@@ -206,24 +220,66 @@ function AnswerCard({
 
       {answer.status === "error" && (
         <div className="flex items-center gap-1.5 mt-2.5">
-          <button
-            onClick={handleRegenerate}
-            className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition-all"
-          >
-            Retry
-          </button>
-          <button
-            onClick={() => onSkip(answer.fieldId)}
-            className="flex-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-all"
-          >
-            Skip
-          </button>
-          <button
-            onClick={() => onFillManually(answer.fieldId)}
-            className="flex-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all"
-          >
-            Fill manually
-          </button>
+          {answer.errorCode === "subscription_required" ? (
+            <>
+              <button
+                onClick={() => onCheckout?.()}
+                className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition-all"
+              >
+                Subscribe
+              </button>
+              <button
+                onClick={() => onSkip(answer.fieldId)}
+                className="flex-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-all"
+              >
+                Skip
+              </button>
+            </>
+          ) : answer.errorCode === "rate_limited" ? (
+            <>
+              <button
+                onClick={() => onSkip(answer.fieldId)}
+                className="flex-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-all"
+              >
+                Skip
+              </button>
+              <button
+                onClick={() => onFillManually(answer.fieldId)}
+                className="flex-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all"
+              >
+                Fill manually
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={handleRegenerate}
+                className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition-all"
+              >
+                Retry
+              </button>
+              {answer.errorCode === "auth" && (
+                <button
+                  onClick={() => onSignIn?.()}
+                  className="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-all"
+                >
+                  Sign in
+                </button>
+              )}
+              <button
+                onClick={() => onSkip(answer.fieldId)}
+                className="flex-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-all"
+              >
+                Skip
+              </button>
+              <button
+                onClick={() => onFillManually(answer.fieldId)}
+                className="flex-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all"
+              >
+                Fill manually
+              </button>
+            </>
+          )}
         </div>
       )}
 

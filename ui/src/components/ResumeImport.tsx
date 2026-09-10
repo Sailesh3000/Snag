@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { UseProfileReturn } from "../hooks/useProfile";
-import type { WebSocketMessage } from "../hooks/useWebSocket";
+import type { ChannelMessage } from "../hooks/useBackendChannel";
 
 interface ExtractedFields {
   first_name: string; last_name: string; email: string; phone: string;
@@ -33,7 +33,7 @@ type Status = "idle" | "uploading" | "extracting" | "review" | "applied" | "erro
 interface ResumeImportProps {
   profile: UseProfileReturn;
   send: (msg: object) => void;
-  messages: WebSocketMessage[];
+  messages: ChannelMessage[];
 }
 
 function toDisplayValue(value: string | string[], isList: boolean): string {
@@ -84,26 +84,29 @@ export default function ResumeImport({ profile, send, messages }: ResumeImportPr
     setError(null);
 
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(`${profile.apiBase}/profile/resume/upload`, {
-        method: "POST",
-        headers: profile.authHeaders,
-        body: form,
-      });
-      if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-      const body = await res.json();
-      if (body.extractionError || !body.resumeText) {
-        throw new Error(body.extractionError || "Couldn't read this file.");
+      // The file is read LOCALLY (plan B3: nothing leaves the machine); only
+      // the extracted-text round-trip for the LLM step goes through the
+      // background, which currently parks it (resume extraction returns with
+      // the local-model / BYOK mode).
+      const isText = /\.(txt|md)$/i.test(file.name);
+      const isPdf = /\.pdf$/i.test(file.name);
+      let resumeText: string;
+      if (isText) {
+        resumeText = await file.text();
+      } else if (isPdf) {
+        throw new Error("PDF import needs the local-model mode — it's coming back in a later release. For now, export your resume to .txt and import that.");
+      } else {
+        throw new Error("Unsupported file type — use .txt, .md, or .pdf.");
       }
+      if (!resumeText.trim()) throw new Error("Couldn't read any text from this file.");
 
       setStatus("extracting");
-      send({ type: "resume:extract", payload: { resumeText: body.resumeText } });
+      send({ type: "resume:extract", payload: { resumeText } });
     } catch (err) {
       setStatus("error");
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [profile.apiBase, profile.authHeaders, send]);
+  }, [send]);
 
   const toggleSelected = useCallback((key: string) => {
     setSelected((prev) => {

@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.280",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "typescript": "^5.7.0",
     "vitest": "^2.1.9"

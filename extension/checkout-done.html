@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Snag — Subscription</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        display: grid;
+        place-items: center;
+        height: 100vh;
+        margin: 0;
+        background: #0f1115;
+        color: #e8e8ea;
+      }
+      p { opacity: 0.7; font-size: 14px; }
+      #status { opacity: 1; font-size: 14px; color: #a5b4fc; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; max-width: 320px">
+      <h1 style="font-size: 18px; font-weight: 600">Payment received</h1>
+      <p id="status">Checking your subscription&hellip;</p>
+      <p>You can close this tab and return to Snag.</p>
+    </div>
+    <script>
+      // Extension page (same origin as the service worker) — it talks to the
+      // background directly, so no content script is needed for the ping.
+      //
+      // Configure Paddle's checkout "confirmation page URL" to this page at
+      // deploy time (plan B4). The Paddle webhook (subscription.created) can
+      // still be in flight when the user lands here, so we do two things:
+      //   1. checkout:done -> background re-polls /api/me for ALL active tabs
+      //      (the sidebar un-gates immediately when the status lands)
+      //   2. api:me         -> this page's own status line
+      // The 30s alarm re-poll covers any webhook latency beyond that.
+      const status = document.getElementById("status");
+      let finished = false;
+      const finish = (active) => {
+        if (finished) return;
+        finished = true;
+        status.textContent = active
+          ? "Subscription active — you're all set."
+          : "We don't see the subscription yet. It usually appears within a minute; the sidebar updates itself automatically.";
+      };
+
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg?.type === "api:me:response") {
+          finish(!!(msg.payload?.ok && msg.payload.me?.subscriptionStatus === "active"));
+        }
+      });
+
+      try {
+        chrome.runtime.sendMessage({ type: "checkout:done" });
+        chrome.runtime.sendMessage({ type: "api:me" });
+      } catch (e) {
+        finish(false);
+      }
+      setTimeout(() => finish(false), 8000); // never spin forever
+    </script>
+  </body>
+</html>

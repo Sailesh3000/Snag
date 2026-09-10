@@ -1,62 +1,53 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-const DEFAULT_API_BASE = "http://127.0.0.1:8765/api";
+// Feedback delivery: the pilot's backend used to email the team's SMTP inbox
+// server-side. The published build has no such endpoint (plan A: exactly three
+// API routes), so feedback is composed as a pre-filled email in the user's
+// own mail client. Replace the placeholder once the team feedback address is
+// decided at deploy time.
+const FEEDBACK_EMAIL = "feedback@REPLACE_WITH_YOUR_DOMAIN.com";
+const EXTENSION_VERSION = "0.3.0";
 
 interface FeedbackModalProps {
   onClose: () => void;
 }
+
+const FEEDBACK_TYPES = [
+  { value: "general", label: "General Feedback" },
+  { value: "bug", label: "Bug Report" },
+  { value: "feature", label: "Feature Request" },
+  { value: "ux", label: "UX Improvement" },
+];
 
 export default function FeedbackModal({ onClose }: FeedbackModalProps) {
   const [type, setType] = useState<string>("general");
   const [message, setMessage] = useState("");
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
-  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    if (typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.local.get("settings", (data: Record<string, unknown>) => {
-        const s = data?.settings as Record<string, string> | undefined;
-        setApiBase(s?.backendUrl
-          ? s.backendUrl.replace(/^ws/, "http").replace(/\/$/, "") + "/api"
-          : DEFAULT_API_BASE);
-        setAuthHeaders(s?.authToken ? { Authorization: `Bearer ${s.authToken}` } : {});
-      });
-    }
-  }, []);
-
-  const FEEDBACK_TYPES = [
-    { value: "general", label: "General Feedback" },
-    { value: "bug", label: "Bug Report" },
-    { value: "feature", label: "Feature Request" },
-    { value: "ux", label: "UX Improvement" },
-  ];
-
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(() => {
     if (!message.trim()) return;
-    setSending(true);
     setError(null);
+    const typeLabel = FEEDBACK_TYPES.find((ft) => ft.value === type)?.label ?? type;
+    const body = [
+      `Type: ${typeLabel}`,
+      `Extension version: ${EXTENSION_VERSION}`,
+      email.trim() ? `Reply-to: ${email.trim()}` : "",
+      "",
+      message.trim(),
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const subject = `[Snag] ${typeLabel}`;
     try {
-      const res = await fetch(`${apiBase}/feedback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ type, message: message.trim(), email: email.trim() || undefined, source: "extension", version: "0.2.0" }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `Failed (${res.status})`);
-      }
+      window.location.href = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       setSubmitted(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSending(false);
+    } catch {
+      setError("Couldn't open your email client. Send this instead: " + FEEDBACK_EMAIL);
     }
-  }, [type, message, email, apiBase, authHeaders]);
+  }, [type, message, email]);
 
   return (
     <AnimatePresence>
@@ -102,8 +93,8 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-[13px] text-white font-medium">Thanks for your feedback!</p>
-                <p className="text-[11px] text-gray-500 mt-1">It helps us improve Snag.</p>
+                <p className="text-[13px] text-white font-medium">Your email app should open now</p>
+                <p className="text-[11px] text-gray-500 mt-1">Send it when ready — it helps us improve Snag.</p>
                 <button onClick={onClose} className="mt-4 px-4 py-1.5 bg-accent/20 rounded-lg text-accent text-[11px] font-semibold hover:bg-accent/30 transition-colors">
                   Close
                 </button>
@@ -166,10 +157,10 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
                   </button>
                   <button
                     onClick={handleSubmit}
-                    disabled={!message.trim() || sending}
+                    disabled={!message.trim()}
                     className="px-4 py-1.5 bg-accent/20 rounded-lg text-accent text-[11px] font-semibold hover:bg-accent/30 transition-colors disabled:opacity-40"
                   >
-                    {sending ? "Sending..." : "Send"}
+                    Compose email
                   </button>
                 </div>
               </>
