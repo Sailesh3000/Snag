@@ -23,3 +23,6 @@ ui/dist/
 .DS_Store
 Thumbs.db
 infra/cdk.out/
+extension/classify.js
+extension/similarity.js
+extension/storage/
