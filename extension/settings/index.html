@@ -85,12 +85,30 @@
       font-size: 11px;
       color: #64748b;
       margin-top: 4px;
+      line-height: 1.5;
     }
     .hint a {
       color: #6366f1;
       text-decoration: none;
     }
     .hint a:hover { text-decoration: underline; }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pill.active { background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.25); }
+    .pill.inactive { background: rgba(239,68,68,0.1); color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
+    .pill.none { background: rgba(148,163,184,0.1); color: #94a3b8; border: 1px solid rgba(148,163,184,0.2); }
 
     .btn {
       padding: 10px 24px;
@@ -163,6 +181,52 @@
       padding: 4px;
     }
     .toggle-visibility:hover { color: #94a3b8; }
+
+    /* iOS-style switch for the Advanced toggle */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 40px; height: 22px;
+      flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #2a2a3a;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 999px;
+      transition: background 0.2s;
+      cursor: pointer;
+    }
+    .slider::before {
+      content: "";
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 2px; top: 2px;
+      border-radius: 50%;
+      background: #94a3b8;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .switch input:checked + .slider { background: #4f46e5; }
+    .switch input:checked + .slider::before { transform: translateX(18px); background: #fff; }
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: #e2e8f0;
+    }
+    .toggle-desc {
+      font-size: 11px;
+      color: #64748b;
+      margin: 6px 0 0 52px;
+      line-height: 1.5;
+    }
+    #byokFields { margin-top: 16px; }
+    #byokFields .field { margin-bottom: 16px; }
   </style>
 </head>
 <body>
@@ -175,80 +239,118 @@
       </div>
       <div>
         <h1>Snag Settings</h1>
-        <div class="subtitle">Configure your AI provider and API keys</div>
+        <div class="subtitle">Account, local data, and advanced options</div>
       </div>
     </div>
 
     <div class="section">
-      <div class="section-title">LLM Provider</div>
-      <div class="field">
-        <label for="provider">Provider</label>
-        <select id="provider">
-          <option value="ollama">Ollama (Local, Free)</option>
-          <option value="openai">OpenAI (GPT-4o-mini)</option>
-          <option value="anthropic">Anthropic (Claude Haiku)</option>
-          <option value="groq">Groq (Free Tier)</option>
-          <option value="openai-compatible">OpenAI-Compatible API</option>
-        </select>
-      </div>
-
-      <div class="field" id="apiKeyField" style="display:none">
-        <label for="apiKey">API Key</label>
-        <div class="key-input-wrap">
-          <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
-          <button class="toggle-visibility" id="toggleVis">
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
-          </button>
+      <div class="section-title">Snag Account</div>
+      <div class="row" style="margin-bottom:12px">
+        <div>
+          <div style="font-size:13px; font-weight:500; color:#e2e8f0" id="accountEmail">Not signed in</div>
+          <div class="hint" id="accountDetail">Sign in from the Snag sidebar to use AI answers.</div>
         </div>
-        <div class="hint" id="apiKeyHint"></div>
+        <span class="pill none" id="planPill">No plan</span>
       </div>
-
-      <div class="field" id="baseUrlField" style="display:none">
-        <label for="baseUrl">Base URL</label>
-        <input type="text" id="baseUrl" placeholder="https://api.openai.com/v1" />
-        <div class="hint">For OpenAI-compatible APIs (e.g., LM Studio, Together AI, custom endpoints)</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-primary" id="signInBtn" type="button">Sign in</button>
+        <button class="btn btn-secondary" id="manageBtn" type="button" style="display:none">Manage subscription</button>
+        <button class="btn btn-secondary" id="signOutBtn" type="button" style="display:none">Sign out</button>
       </div>
+    </div>
 
-      <div class="field" id="modelField" style="display:none">
-        <label for="model">Model ID</label>
-        <input type="text" id="model" placeholder="gpt-4o-mini" />
-        <div class="hint" id="modelHint">Leave blank to use the provider's default model</div>
+    <div class="section">
+      <div class="section-title">Data on this device</div>
+      <div class="hint" style="margin-top:0; line-height:1.6">
+        Your profile, resumes, and past answers are stored <strong>only in this browser</strong>
+        (local IndexedDB). They are never uploaded to Snag's servers.
+        Clearing your browsing data removes them — there is no cross-device sync.
       </div>
+    </div>
 
-      <div class="field" id="ollamaUrlField">
-        <label for="ollamaUrl">Ollama URL</label>
-        <input type="text" id="ollamaUrl" placeholder="http://127.0.0.1:11434" />
+    <div class="section">
+      <div class="section-title">Advanced</div>
+      <label class="toggle-label" for="localModelMode">
+        <span>Local model mode (bring your own key)</span>
+        <span class="switch">
+          <input type="checkbox" id="localModelMode" />
+          <span class="slider"></span>
+        </span>
+      </label>
+      <div class="toggle-desc">
+        Coming soon: generate answers with your own Anthropic / OpenAI / Groq key or a local
+        Ollama model instead of the Snag subscription. Snag will ask to access the provider's
+        API when you enable this.
       </div>
-
-      <div class="field" id="ollamaModelField">
-        <label for="ollamaModel">Ollama Model</label>
-        <input type="text" id="ollamaModel" placeholder="qwen3:8b" />
-      </div>
-
-      <div class="field">
-        <label for="backendUrl">Backend Server URL</label>
-        <input type="text" id="backendUrl" placeholder="ws://127.0.0.1:8765" />
-        <div class="hint">WebSocket URL for the backend server. For local: <code>ws://127.0.0.1:8765</code></div>
-      </div>
-
-      <div class="field">
-        <label for="authToken">Backend Auth Token</label>
-        <div class="key-input-wrap">
-          <input type="password" id="authToken" placeholder="paste the token from the backend's startup log" autocomplete="off" />
-          <button class="toggle-visibility" id="toggleAuthVis">
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
-          </button>
+      <div id="byokFields" style="display:none">
+        <div class="field">
+          <label for="provider">Provider</label>
+          <select id="provider">
+            <option value="ollama">Ollama (Local, Free)</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="groq">Groq</option>
+            <option value="openai-compatible">OpenAI-Compatible API</option>
+          </select>
         </div>
-        <div class="hint">
-          Required — the backend rejects any request without it. Find it in <code>logs/snag.log</code>
-          (or the console) the first time you start the backend, or in <code>data/auth_token.txt</code>.
-          Stored locally in this browser profile only (not synced to your Google account).
+
+        <div class="field" id="apiKeyField" style="display:none">
+          <label for="apiKey">API Key</label>
+          <div class="key-input-wrap">
+            <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
+            <button class="toggle-visibility" id="toggleVis" type="button">
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
+          <div class="hint" id="apiKeyHint"></div>
+        </div>
+
+        <div class="field" id="baseUrlField" style="display:none">
+          <label for="baseUrl">Base URL</label>
+          <input type="text" id="baseUrl" placeholder="https://api.openai.com/v1" />
+          <div class="hint">For OpenAI-compatible APIs (e.g., LM Studio, Together AI, custom endpoints)</div>
+        </div>
+
+        <div class="field" id="modelField" style="display:none">
+          <label for="model">Model ID</label>
+          <input type="text" id="model" placeholder="gpt-4o-mini" />
+          <div class="hint" id="modelHint">Leave blank to use the provider's default model</div>
+        </div>
+
+        <div class="field" id="ollamaUrlField">
+          <label for="ollamaUrl">Ollama URL</label>
+          <input type="text" id="ollamaUrl" placeholder="http://127.0.0.1:11434" />
+        </div>
+
+        <div class="field" id="ollamaModelField">
+          <label for="ollamaModel">Ollama Model</label>
+          <input type="text" id="ollamaModel" placeholder="qwen3:8b" />
+        </div>
+
+        <div class="field">
+          <label for="backendUrl">Legacy Backend Server URL</label>
+          <input type="text" id="backendUrl" placeholder="ws://127.0.0.1:8765" />
+          <div class="hint">Only used by the local backend server in local model mode. The subscription flow does not use this.</div>
+        </div>
+
+        <div class="field">
+          <label for="authToken">Legacy Backend Auth Token</label>
+          <div class="key-input-wrap">
+            <input type="password" id="authToken" placeholder="token from the local backend's startup log" autocomplete="off" />
+            <button class="toggle-visibility" id="toggleAuthVis" type="button">
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
+          <div class="hint">
+            For the local backend server only. Stored locally in this browser profile only (not synced
+            to your Google account).
+          </div>
         </div>
       </div>
     </div>
@@ -277,8 +379,8 @@
     <div id="status" class="status"></div>
 
     <div class="actions">
-      <button class="btn btn-secondary" id="resetBtn">Reset Defaults</button>
-      <button class="btn btn-primary" id="saveBtn">Save Settings</button>
+      <button class="btn btn-secondary" id="resetBtn" type="button">Reset Defaults</button>
+      <button class="btn btn-primary" id="saveBtn" type="button">Save Settings</button>
     </div>
   </div>
 

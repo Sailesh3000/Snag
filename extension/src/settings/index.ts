@@ -1,4 +1,9 @@
+// Snag settings page (extension page, direct chrome.runtime access).
+// Sections: account/plan, local-data notice, advanced BYOK (off by default,
+// parked until the local-model phase), profile defaults, debugging.
+
 interface Settings {
+  localModelMode: boolean;
   provider: string;
   apiKey: string;
   baseUrl: string;
@@ -13,6 +18,7 @@ interface Settings {
 }
 
 const DEFAULTS: Settings = {
+  localModelMode: false,
   provider: "ollama",
   apiKey: "",
   baseUrl: "",
@@ -25,6 +31,18 @@ const DEFAULTS: Settings = {
   defaultCompany: "",
   defaultRole: "",
 };
+
+// Must stay in sync with ui/src/lib/pricing.ts.
+const PADDLE_PORTAL_URL = "https://REPLACE_WITH_PADDLE_CUSTOMER_PORTAL_URL";
+
+// Must stay in sync with optional_host_permissions in manifest.json.
+const OPTIONAL_ORIGINS = [
+  "https://api.anthropic.com/*",
+  "https://api.openai.com/*",
+  "https://api.groq.com/*",
+  "http://127.0.0.1/*",
+  "http://localhost/*",
+];
 
 const PROVIDER_HINTS: Record<string, string> = {
   openai: "Get your key at <a href='https://platform.openai.com/api-keys' target='_blank'>platform.openai.com</a>",
@@ -65,6 +83,87 @@ function showStatus(msg: string, type: "success" | "error") {
   setTimeout(() => (el.className = "status"), 3000);
 }
 
+// ---------------------------------------------------------------------------
+// Account section — background is the only place that talks to /api/me;
+// this page just renders the reduced session + subscription view.
+// ---------------------------------------------------------------------------
+
+interface AccountView {
+  session?: { sub: string; email: string } | null;
+  subscription?: { status: string; currentPeriodEnd: string | null } | null;
+}
+
+function renderAccount(view: AccountView) {
+  const email = div("accountEmail");
+  const detail = div("accountDetail");
+  const pill = div("planPill");
+  const signInBtn = div("signInBtn");
+  const manageBtn = div("manageBtn");
+  const signOutBtn = div("signOutBtn");
+
+  if (view.session) {
+    email.textContent = view.session.email;
+    if (view.subscription?.status === "active") {
+      const until = view.subscription.currentPeriodEnd
+        ? ` · until ${new Date(view.subscription.currentPeriodEnd).toLocaleDateString()}`
+        : "";
+      detail.textContent = `Subscription active${until}`;
+      pill.textContent = "Pro";
+      pill.className = "pill active";
+    } else {
+      detail.textContent = "No active subscription — subscribe from the sidebar to generate answers.";
+      pill.textContent = "No plan";
+      pill.className = "pill inactive";
+    }
+    signInBtn.style.display = "none";
+    manageBtn.style.display = "";
+    signOutBtn.style.display = "";
+  } else {
+    email.textContent = "Not signed in";
+    detail.textContent = "Sign in to generate answers from your Snag subscription.";
+    pill.textContent = "No plan";
+    pill.className = "pill none";
+    signInBtn.style.display = "";
+    manageBtn.style.display = "none";
+    signOutBtn.style.display = "none";
+  }
+}
+
+function refreshAccount() {
+  chrome.runtime.sendMessage({ type: "auth:status" }).catch(() => {});
+}
+
+chrome.runtime.onMessage.addListener((msg: { type: string; payload?: AccountView }) => {
+  if (msg.type === "auth:status" || msg.type === "auth:updated") {
+    renderAccount(msg.payload || {});
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Advanced: local model mode (BYOK) — parked; enabling it requests the
+// optional host permissions the provider calls would need.
+// ---------------------------------------------------------------------------
+
+function setByokVisible(on: boolean) {
+  div("byokFields").style.display = on ? "block" : "none";
+}
+
+async function onLocalModeToggled(on: boolean) {
+  setByokVisible(on);
+  try {
+    if (on) {
+      const granted = await chrome.permissions.request({ origins: OPTIONAL_ORIGINS });
+      if (!granted) showStatus("Local model mode needs the provider API permission — enable it and retry.", "error");
+    } else {
+      await chrome.permissions.remove({ origins: OPTIONAL_ORIGINS });
+    }
+  } catch (e) {
+    showStatus(`Could not update permissions: ${e instanceof Error ? e.message : String(e)}`, "error");
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 function toggleKeyVisibility() {
   const input = inp("apiKey");
   input.type = input.type === "password" ? "text" : "password";
@@ -101,6 +200,8 @@ async function loadSettings() {
   const stored = await chrome.storage.local.get("settings");
   const s: Settings = { ...DEFAULTS, ...(stored.settings || {}) };
 
+  inp("localModelMode").checked = s.localModelMode;
+  setByokVisible(s.localModelMode);
   sel("provider").value = s.provider;
   inp("apiKey").value = s.apiKey;
   inp("baseUrl").value = s.baseUrl;
@@ -114,10 +215,12 @@ async function loadSettings() {
   inp("defaultRole").value = s.defaultRole;
 
   updateProviderUI();
+  refreshAccount();
 }
 
 async function saveSettings() {
   const settings: Settings = {
+    localModelMode: inp("localModelMode").checked,
     provider: sel("provider").value,
     apiKey: inp("apiKey").value.trim(),
     baseUrl: inp("baseUrl").value.trim(),
@@ -136,6 +239,8 @@ async function saveSettings() {
 }
 
 function resetDefaults() {
+  inp("localModelMode").checked = DEFAULTS.localModelMode;
+  setByokVisible(DEFAULTS.localModelMode);
   sel("provider").value = DEFAULTS.provider;
   inp("apiKey").value = DEFAULTS.apiKey;
   inp("baseUrl").value = DEFAULTS.baseUrl;
@@ -159,5 +264,18 @@ document.getElementById("saveBtn")!.addEventListener("click", saveSettings);
 document.getElementById("resetBtn")!.addEventListener("click", resetDefaults);
 document.getElementById("toggleVis")!.addEventListener("click", toggleKeyVisibility);
 document.getElementById("toggleAuthVis")!.addEventListener("click", toggleAuthTokenVisibility);
+(inp("localModelMode") as HTMLInputElement).addEventListener("change", (e) =>
+  onLocalModeToggled((e.target as HTMLInputElement).checked),
+);
+
+div("signInBtn").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "auth:signIn" }).catch(() => {});
+});
+div("signOutBtn").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "auth:signOut" }).catch(() => {});
+});
+div("manageBtn").addEventListener("click", () => {
+  chrome.tabs.create({ url: PADDLE_PORTAL_URL });
+});
 
 loadSettings();
