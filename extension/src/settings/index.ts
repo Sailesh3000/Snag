@@ -1,32 +1,28 @@
 // Snag settings page (extension page, direct chrome.runtime access).
-// Sections: account/plan, local-data notice, advanced BYOK (off by default,
-// parked until the local-model phase), profile defaults, debugging.
+// Sections: account/plan, local-data notice, AI provider (BYOK — the only
+// way answers are generated; the subscription gates using Snag at all and
+// funds Bedrock-backed memory matching, not generation), profile defaults,
+// debugging.
 
 interface Settings {
-  localModelMode: boolean;
   provider: string;
   apiKey: string;
   baseUrl: string;
   model: string;
   ollamaUrl: string;
   ollamaModel: string;
-  backendUrl: string;
-  authToken: string;
   debugLogging: boolean;
   defaultCompany: string;
   defaultRole: string;
 }
 
 const DEFAULTS: Settings = {
-  localModelMode: false,
   provider: "ollama",
   apiKey: "",
   baseUrl: "",
   model: "",
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen3:8b",
-  backendUrl: "ws://127.0.0.1:8765",
-  authToken: "",
   debugLogging: false,
   defaultCompany: "",
   defaultRole: "",
@@ -36,13 +32,14 @@ const DEFAULTS: Settings = {
 const PADDLE_PORTAL_URL = "https://REPLACE_WITH_PADDLE_CUSTOMER_PORTAL_URL";
 
 // Must stay in sync with optional_host_permissions in manifest.json.
-const OPTIONAL_ORIGINS = [
-  "https://api.anthropic.com/*",
-  "https://api.openai.com/*",
-  "https://api.groq.com/*",
-  "http://127.0.0.1/*",
-  "http://localhost/*",
-];
+// Requested per-provider on Save (not all at once) — least-privilege, and
+// avoids a scary blanket permission prompt for a provider the user never
+// picked.
+const PROVIDER_ORIGINS: Record<string, string> = {
+  openai: "https://api.openai.com/*",
+  anthropic: "https://api.anthropic.com/*",
+  groq: "https://api.groq.com/*",
+};
 
 const PROVIDER_HINTS: Record<string, string> = {
   openai: "Get your key at <a href='https://platform.openai.com/api-keys' target='_blank'>platform.openai.com</a>",
@@ -111,7 +108,7 @@ function renderAccount(view: AccountView) {
       pill.textContent = "Pro";
       pill.className = "pill active";
     } else {
-      detail.textContent = "No active subscription — subscribe from the sidebar to generate answers.";
+      detail.textContent = "No active subscription — subscribe from the sidebar to use Snag.";
       pill.textContent = "No plan";
       pill.className = "pill inactive";
     }
@@ -120,7 +117,7 @@ function renderAccount(view: AccountView) {
     signOutBtn.style.display = "";
   } else {
     email.textContent = "Not signed in";
-    detail.textContent = "Sign in to generate answers from your Snag subscription.";
+    detail.textContent = "Sign in to use your Snag subscription.";
     pill.textContent = "No plan";
     pill.className = "pill none";
     signInBtn.style.display = "";
@@ -140,37 +137,9 @@ chrome.runtime.onMessage.addListener((msg: { type: string; payload?: AccountView
 });
 
 // ---------------------------------------------------------------------------
-// Advanced: local model mode (BYOK) — parked; enabling it requests the
-// optional host permissions the provider calls would need.
-// ---------------------------------------------------------------------------
-
-function setByokVisible(on: boolean) {
-  div("byokFields").style.display = on ? "block" : "none";
-}
-
-async function onLocalModeToggled(on: boolean) {
-  setByokVisible(on);
-  try {
-    if (on) {
-      const granted = await chrome.permissions.request({ origins: OPTIONAL_ORIGINS });
-      if (!granted) showStatus("Local model mode needs the provider API permission — enable it and retry.", "error");
-    } else {
-      await chrome.permissions.remove({ origins: OPTIONAL_ORIGINS });
-    }
-  } catch (e) {
-    showStatus(`Could not update permissions: ${e instanceof Error ? e.message : String(e)}`, "error");
-  }
-}
-
-// ---------------------------------------------------------------------------
 
 function toggleKeyVisibility() {
   const input = inp("apiKey");
-  input.type = input.type === "password" ? "text" : "password";
-}
-
-function toggleAuthTokenVisibility() {
-  const input = inp("authToken");
   input.type = input.type === "password" ? "text" : "password";
 }
 
@@ -194,22 +163,32 @@ function updateProviderUI() {
   }
 }
 
+/** Least-privilege: request only the picked provider's origin (Ollama's
+ * localhost origin, or a cloud provider's origin once a key is entered) —
+ * not all optional origins at once. */
+async function requestProviderPermissionIfNeeded(provider: string, apiKey: string): Promise<void> {
+  const origins = provider === "ollama" ? ["http://127.0.0.1/*", "http://localhost/*"] : PROVIDER_ORIGINS[provider] && apiKey ? [PROVIDER_ORIGINS[provider]] : [];
+  if (origins.length === 0) return;
+  try {
+    const granted = await chrome.permissions.request({ origins });
+    if (!granted) showStatus(`Snag needs permission to reach ${provider} to generate answers.`, "error");
+  } catch (e) {
+    showStatus(`Could not update permissions: ${e instanceof Error ? e.message : String(e)}`, "error");
+  }
+}
+
 async function loadSettings() {
-  // chrome.storage.local (not .sync): this holds the backend auth token and
-  // the BYOK API key — neither should sync to the user's Google account.
+  // chrome.storage.local (not .sync): settings include the BYOK API key,
+  // which shouldn't sync to the user's Google account.
   const stored = await chrome.storage.local.get("settings");
   const s: Settings = { ...DEFAULTS, ...(stored.settings || {}) };
 
-  inp("localModelMode").checked = s.localModelMode;
-  setByokVisible(s.localModelMode);
   sel("provider").value = s.provider;
   inp("apiKey").value = s.apiKey;
   inp("baseUrl").value = s.baseUrl;
   inp("model").value = s.model;
   inp("ollamaUrl").value = s.ollamaUrl;
   inp("ollamaModel").value = s.ollamaModel;
-  inp("backendUrl").value = s.backendUrl;
-  inp("authToken").value = s.authToken;
   inp("debugLogging").checked = s.debugLogging;
   inp("defaultCompany").value = s.defaultCompany;
   inp("defaultRole").value = s.defaultRole;
@@ -220,35 +199,29 @@ async function loadSettings() {
 
 async function saveSettings() {
   const settings: Settings = {
-    localModelMode: inp("localModelMode").checked,
     provider: sel("provider").value,
     apiKey: inp("apiKey").value.trim(),
     baseUrl: inp("baseUrl").value.trim(),
     model: inp("model").value.trim(),
     ollamaUrl: inp("ollamaUrl").value.trim() || DEFAULTS.ollamaUrl,
     ollamaModel: inp("ollamaModel").value.trim() || DEFAULTS.ollamaModel,
-    backendUrl: inp("backendUrl").value.trim() || DEFAULTS.backendUrl,
-    authToken: inp("authToken").value.trim(),
     debugLogging: inp("debugLogging").checked,
     defaultCompany: inp("defaultCompany").value.trim(),
     defaultRole: inp("defaultRole").value.trim(),
   };
 
   await chrome.storage.local.set({ settings });
+  await requestProviderPermissionIfNeeded(settings.provider, settings.apiKey);
   showStatus("Settings saved!", "success");
 }
 
 function resetDefaults() {
-  inp("localModelMode").checked = DEFAULTS.localModelMode;
-  setByokVisible(DEFAULTS.localModelMode);
   sel("provider").value = DEFAULTS.provider;
   inp("apiKey").value = DEFAULTS.apiKey;
   inp("baseUrl").value = DEFAULTS.baseUrl;
   inp("model").value = DEFAULTS.model;
   inp("ollamaUrl").value = DEFAULTS.ollamaUrl;
   inp("ollamaModel").value = DEFAULTS.ollamaModel;
-  inp("backendUrl").value = DEFAULTS.backendUrl;
-  inp("authToken").value = DEFAULTS.authToken;
   inp("debugLogging").checked = DEFAULTS.debugLogging;
   inp("defaultCompany").value = DEFAULTS.defaultCompany;
   inp("defaultRole").value = DEFAULTS.defaultRole;
@@ -257,16 +230,11 @@ function resetDefaults() {
 }
 
 (window as any).toggleKeyVisibility = toggleKeyVisibility;
-(window as any).toggleAuthTokenVisibility = toggleAuthTokenVisibility;
 
 sel("provider").addEventListener("change", updateProviderUI);
 document.getElementById("saveBtn")!.addEventListener("click", saveSettings);
 document.getElementById("resetBtn")!.addEventListener("click", resetDefaults);
 document.getElementById("toggleVis")!.addEventListener("click", toggleKeyVisibility);
-document.getElementById("toggleAuthVis")!.addEventListener("click", toggleAuthTokenVisibility);
-(inp("localModelMode") as HTMLInputElement).addEventListener("change", (e) =>
-  onLocalModeToggled((e.target as HTMLInputElement).checked),
-);
 
 div("signInBtn").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "auth:signIn" }).catch(() => {});

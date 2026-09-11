@@ -1,11 +1,11 @@
 /**
  * The extension's ONLY backend client. Every network call to Snag's
- * server goes through here — plan B3 confines the surface to exactly
- * three endpoints:
+ * server goes through here — the revised plan confines the surface to
+ * exactly two endpoints (LLM generation is BYOK, never touches the
+ * backend — see llm/client.ts):
  *
- *   GET  /api/me               session + subscription status
- *   POST /api/answer/generate  SSE-streamed LLM completion
- *   POST /api/embed            OpenAI text-embedding-3-small
+ *   GET  /api/me      license check: session + subscription status
+ *   POST /api/embed   Bedrock Titan embedding, still subscription-gated
  *
  * Auth: Bearer access token with proactive refresh (<60s remaining), a
  * single retry after a 401, then "sign in again". 402 and 429 are mapped
@@ -81,85 +81,3 @@ export async function apiEmbed(text: string): Promise<number[]> {
   return body.embedding as number[];
 }
 
-export interface GenerateOptions {
-  systemPrompt: string;
-  prompt: string;
-  question: string;
-  company?: string;
-  role?: string;
-  questionType?: string;
-  onChunk?: (chunk: string) => void;
-}
-
-/**
- * Streaming answer generation.
- *
- * SSE contract (matched by the backend, Phase 2): each event is
- * `data: {"text": "..."}` and the stream ends with `data: [DONE]`. A
- * `{"error": "..."}` event aborts with an ApiError. If the response is
- * not text/event-stream (e.g. a plain-JSON error path), the whole body is
- * returned as a single chunk.
- */
-export async function apiGenerateAnswer(opts: GenerateOptions): Promise<string> {
-  const resp = await fetchWithAuth("/api/answer/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({
-      systemPrompt: opts.systemPrompt,
-      prompt: opts.prompt,
-      question: opts.question,
-      company: opts.company ?? "",
-      role: opts.role ?? "",
-      questionType: opts.questionType ?? "",
-    }),
-  });
-
-  const contentType = resp.headers.get("content-type") ?? "";
-  if (!contentType.includes("text/event-stream")) {
-    const text = await resp.text();
-    opts.onChunk?.(text);
-    return text;
-  }
-  return readSseStream(resp, opts.onChunk);
-}
-
-async function readSseStream(resp: Response, onChunk?: (chunk: string) => void): Promise<string> {
-  if (!resp.body) throw new ApiError("SSE response has no body", 200);
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let full = "";
-
-  const consumeEvent = (rawEvent: string): void => {
-    // SSE allows multiple `data:` lines per event; join with newlines.
-    const dataLines = rawEvent
-      .split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart());
-    if (dataLines.length === 0) return;
-    const data = dataLines.join("\n").trim();
-    if (data === "[DONE]") return;
-    const parsed = JSON.parse(data) as { text?: unknown; error?: unknown };
-    if (typeof parsed.error === "string" && parsed.error) {
-      throw new ApiError(`stream error: ${parsed.error}`, 500);
-    }
-    const text = typeof parsed.text === "string" ? parsed.text : "";
-    if (text) {
-      full += text;
-      onChunk?.(text);
-    }
-  };
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      consumeEvent(buffer.slice(0, sep));
-      buffer = buffer.slice(sep + 2);
-    }
-  }
-  if (buffer.trim()) consumeEvent(buffer);
-  return full;
-}

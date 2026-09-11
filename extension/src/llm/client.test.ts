@@ -10,8 +10,6 @@ function settings(overrides: Partial<ExtensionSettings> = {}): ExtensionSettings
     model: "",
     ollamaUrl: "http://127.0.0.1:11434",
     ollamaModel: "qwen3:8b",
-    backendUrl: "ws://127.0.0.1:8765",
-    authToken: "",
     debugLogging: false,
     defaultCompany: "",
     defaultRole: "",

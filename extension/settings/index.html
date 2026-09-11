@@ -239,7 +239,7 @@
       </div>
       <div>
         <h1>Snag Settings</h1>
-        <div class="subtitle">Account, local data, and advanced options</div>
+        <div class="subtitle">Account, AI provider, and local data</div>
       </div>
     </div>
 
@@ -248,7 +248,7 @@
       <div class="row" style="margin-bottom:12px">
         <div>
           <div style="font-size:13px; font-weight:500; color:#e2e8f0" id="accountEmail">Not signed in</div>
-          <div class="hint" id="accountDetail">Sign in from the Snag sidebar to use AI answers.</div>
+          <div class="hint" id="accountDetail">Sign in from the Snag sidebar to use Snag.</div>
         </div>
         <span class="pill none" id="planPill">No plan</span>
       </div>
@@ -269,20 +269,13 @@
     </div>
 
     <div class="section">
-      <div class="section-title">Advanced</div>
-      <label class="toggle-label" for="localModelMode">
-        <span>Local model mode (bring your own key)</span>
-        <span class="switch">
-          <input type="checkbox" id="localModelMode" />
-          <span class="slider"></span>
-        </span>
-      </label>
-      <div class="toggle-desc">
-        Coming soon: generate answers with your own Anthropic / OpenAI / Groq key or a local
-        Ollama model instead of the Snag subscription. Snag will ask to access the provider's
-        API when you enable this.
+      <div class="section-title">AI Provider</div>
+      <div class="hint" style="margin-top:0; margin-bottom:16px; line-height:1.6">
+        Snag generates answers using your own AI provider account — pick one below and add your
+        key. Your Snag subscription unlocks using Snag at all and funds smarter memory matching;
+        it does not pay for AI generation itself.
       </div>
-      <div id="byokFields" style="display:none">
+      <div id="byokFields">
         <div class="field">
           <label for="provider">Provider</label>
           <select id="provider">
@@ -328,29 +321,6 @@
         <div class="field" id="ollamaModelField">
           <label for="ollamaModel">Ollama Model</label>
           <input type="text" id="ollamaModel" placeholder="qwen3:8b" />
-        </div>
-
-        <div class="field">
-          <label for="backendUrl">Legacy Backend Server URL</label>
-          <input type="text" id="backendUrl" placeholder="ws://127.0.0.1:8765" />
-          <div class="hint">Only used by the local backend server in local model mode. The subscription flow does not use this.</div>
-        </div>
-
-        <div class="field">
-          <label for="authToken">Legacy Backend Auth Token</label>
-          <div class="key-input-wrap">
-            <input type="password" id="authToken" placeholder="token from the local backend's startup log" autocomplete="off" />
-            <button class="toggle-visibility" id="toggleAuthVis" type="button">
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-            </button>
-          </div>
-          <div class="hint">
-            For the local backend server only. Stored locally in this browser profile only (not synced
-            to your Google account).
-          </div>
         </div>
       </div>
     </div>

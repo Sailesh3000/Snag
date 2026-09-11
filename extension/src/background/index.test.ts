@@ -1,5 +1,37 @@
 import "fake-indexeddb/auto";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
+
+// BYOK generation (revised plan): the LLM call itself never touches the
+// backend, so it's mocked here rather than driven through the fetch stub
+// below (which still covers /api/me and /api/embed, both real backend
+// calls). `vi.hoisted` is required because `vi.mock` factories are hoisted
+// above this file's own top-level declarations.
+const llmState = vi.hoisted(() => ({
+  chunks: ["Hello ", "there. I am Ada."] as string[],
+  error: null as string | null,
+  calls: [] as Array<{ system: string; prompt: string }>,
+}));
+
+vi.mock("../llm/client.js", () => ({
+  llmGenerateStream: async (
+    system: string,
+    prompt: string,
+    _settings: unknown,
+    cb: { onChunk: (c: string) => void; onDone: () => void; onError: (e: string) => void },
+  ) => {
+    llmState.calls.push({ system, prompt });
+    if (llmState.error) {
+      cb.onError(llmState.error);
+      return;
+    }
+    for (const c of llmState.chunks) cb.onChunk(c);
+    cb.onDone();
+  },
+  llmGenerate: async (system: string, prompt: string) => {
+    llmState.calls.push({ system, prompt });
+    return llmState.chunks.join("");
+  },
+}));
 
 // ---------------------------------------------------------------------------
 // Chrome stub — background/index.ts registers chrome.* listeners at module
@@ -73,9 +105,8 @@ const sessionStore = makeStore();
 
 const api = {
   meStatus: "active",
-  generate: "sse" as "sse" | "402" | "429",
   embed: [0.5, 0.5, 0.707] as number[],
-  generateBodies: [] as Record<string, unknown>[],
+  embedStatus: 200 as 200 | 429,
   embedCalls: 0,
 };
 
@@ -87,8 +118,6 @@ function fakeJwt(sub: string, email: string): string {
 function jsonResp(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
-
-const SSE_BODY = 'data: {"text": "Hello "}\n\ndata: {"text": "there. I am Ada."}\n\ndata: [DONE]\n\n';
 
 (globalThis as any).fetch = (url: unknown, init?: RequestInit) => {
   const u = String(url);
@@ -110,13 +139,10 @@ const SSE_BODY = 'data: {"text": "Hello "}\n\ndata: {"text": "there. I am Ada."}
   }
   if (u.includes("/api/embed")) {
     api.embedCalls++;
+    if (api.embedStatus === 429) {
+      return Promise.resolve(jsonResp({ error: "rate_limited", resetsAt: "2026-09-11T00:00:00Z" }, 429));
+    }
     return Promise.resolve(jsonResp({ embedding: api.embed }));
-  }
-  if (u.includes("/api/answer/generate")) {
-    api.generateBodies.push(JSON.parse(String(init?.body)));
-    if (api.generate === "402") return Promise.resolve(jsonResp({ error: "subscription_required" }, 402));
-    if (api.generate === "429") return Promise.resolve(jsonResp({ error: "rate_limited", resetsAt: "2026-09-11T00:00:00Z" }, 429));
-    return Promise.resolve(new Response(SSE_BODY, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
   }
   return Promise.resolve(jsonResp({ error: "not_found" }, 404));
 };
@@ -182,10 +208,12 @@ beforeEach(async () => {
   tabMessages.length = 0;
   createdTabs.length = 0;
   api.meStatus = "active";
-  api.generate = "sse";
   api.embed = [0.5, 0.5, 0.707];
-  api.generateBodies.length = 0;
+  api.embedStatus = 200;
   api.embedCalls = 0;
+  llmState.chunks = ["Hello ", "there. I am Ada."];
+  llmState.error = null;
+  llmState.calls.length = 0;
   await clearAll();
   await clearSession();
 });
@@ -232,7 +260,7 @@ describe("answer:generate", () => {
     expect(lastOf("answer:draft")!.payload).toMatchObject({ errorCode: "auth", draft: "" });
   });
 
-  it("streams SSE chunks and completes with the full draft", async () => {
+  it("streams BYOK chunks and completes with the full draft", async () => {
     await seedSession();
     await setProfileField("email", "a@b.com");
     dispatch({
@@ -259,12 +287,13 @@ describe("answer:generate", () => {
     });
     expect(draft.draft).toBe("Hello there. I am Ada.");
 
-    // The request body must carry the locally-built prompt.
-    const body = api.generateBodies.at(-1)!;
-    expect(body.systemPrompt).toMatch(/^You are Snag, an AI assistant/);
-    expect(String(body.prompt)).toContain("Question: Tell me about yourself");
-    expect(String(body.prompt)).toContain("Role: Engineer | Company: Acme");
-    expect(String(body.prompt)).toContain("Past answers (style guide): No past answers available.");
+    // The LLM call (BYOK, never touches the backend) must carry the
+    // locally-built prompt.
+    const call = llmState.calls.at(-1)!;
+    expect(call.system).toMatch(/^You are Snag, an AI assistant/);
+    expect(call.prompt).toContain("Question: Tell me about yourself");
+    expect(call.prompt).toContain("Role: Engineer | Company: Acme");
+    expect(call.prompt).toContain("Past answers (style guide): No past answers available.");
   });
 
   it("embeds the question and includes similar memories when answers exist", async () => {
@@ -285,28 +314,45 @@ describe("answer:generate", () => {
 
     await waitFor(() => !!lastOf("answer:draft") && !lastOf("answer:draft")!.payload.error, "answer:draft");
     expect(api.embedCalls).toBe(1);
-    const body = api.generateBodies.at(-1)!;
-    expect(String(body.prompt)).toContain("Past answers (style guide): [");
-    expect(String(body.prompt)).toContain("I am Ada, an engineer at Acme.");
+    const call = llmState.calls.at(-1)!;
+    expect(call.prompt).toContain("Past answers (style guide): [");
+    expect(call.prompt).toContain("I am Ada, an engineer at Acme.");
     expect(lastOf("answer:draft")!.payload.memoryCount).toBe(1);
   });
 
-  it("maps 402 to errorCode=subscription_required", async () => {
+  it("maps an inactive subscription to errorCode=subscription_required (license gate, before any LLM call)", async () => {
     await seedSession();
-    api.generate = "402";
+    api.meStatus = "none";
     dispatch({ type: "answer:generate", payload: { fieldId: "q1", question: "Tell me about yourself" } });
     await waitFor(() => !!lastOf("answer:draft"), "answer:draft");
     expect(lastOf("answer:draft")!.payload).toMatchObject({ errorCode: "subscription_required" });
     expect(lastOf("answer:draft")!.payload.error).toMatch(/subscription/i);
+    expect(llmState.calls).toHaveLength(0); // never reached the BYOK call
   });
 
-  it("maps 429 to errorCode=rate_limited", async () => {
+  it("maps a 429 from the (still backend-gated) embed call to errorCode=rate_limited", async () => {
     await seedSession();
-    api.generate = "429";
+    await saveAnswer({
+      question: "Tell me about yourself",
+      answer: "I am Ada, an engineer at Acme.",
+      company: "Acme",
+      role: "Engineer",
+      embedding: [1, 0, 0],
+    });
+    api.embedStatus = 429;
     dispatch({ type: "answer:generate", payload: { fieldId: "q1", question: "Tell me about yourself" } });
     await waitFor(() => !!lastOf("answer:draft"), "answer:draft");
     expect(lastOf("answer:draft")!.payload).toMatchObject({ errorCode: "rate_limited" });
     expect(lastOf("answer:draft")!.payload.error).toMatch(/limit/i);
+  });
+
+  it("maps a missing BYOK API key to errorCode=no_api_key for a non-Ollama provider", async () => {
+    await seedSession();
+    await localStore.set({ settings: { provider: "anthropic", apiKey: "" } });
+    dispatch({ type: "answer:generate", payload: { fieldId: "q1", question: "Tell me about yourself" } });
+    await waitFor(() => !!lastOf("answer:draft"), "answer:draft");
+    expect(lastOf("answer:draft")!.payload).toMatchObject({ errorCode: "no_api_key" });
+    expect(llmState.calls).toHaveLength(0);
   });
 });
 
@@ -427,6 +473,6 @@ describe("parked flows", () => {
   it("resume:extract replies with a parked error instead of calling an LLM", () => {
     dispatch({ type: "resume:extract", payload: { resumeText: "Ada Lovelace..." } });
     expect(lastOf("resume:extracted")!.payload).toMatchObject({ fields: null });
-    expect(lastOf("resume:extracted")!.payload.error).toMatch(/local-model mode/i);
+    expect(lastOf("resume:extracted")!.payload.error).toMatch(/isn't available/i);
   });
 });

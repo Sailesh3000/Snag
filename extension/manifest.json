@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Snag",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvey/gYAszIYARuBqt7gFXuAMzTNlrRcxBAUKtwA3kZG9jeB3jm374eq+9s0VG7nfNZEIoOoEgnyqvTlp7LSvi2a4oBzJ+i/36oB7ZZ8FMZaL8SdiiVZJ4Za9Png2A5+GONJ12EhiDb8n2BWgHxdpxUpaTz8AG00NokWdVIm54vVAlwRhD9wOy9wVMg+5UewNIPQ+h+YDNT8mkCgoUSSyFrjbZQ+t8EnuiUYfPuth1N7bp4lN6Cu7dUbaZpzEMaDP/y38sNUXGWrPkE+zTnu5YKb2xWZXGGhGQvYyhJbxrmHHWVsfIacenfFqW7sMdOMvvgzTbPfPAxvBZR+w0nZpuQIDAQAB",
-  "description": "AI job application copilot. Your profile and past answers stay on this device; AI answers come from your Snag subscription.",
+  "description": "AI job application copilot. Bring your own AI provider key. Your profile and past answers stay on this device; your Snag subscription unlocks using Snag and smarter memory matching.",
   "permissions": ["activeTab", "storage", "scripting", "alarms", "identity", "unlimitedStorage"],
   "host_permissions": [
     "https://*.amazoncognito.com/*",

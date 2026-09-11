@@ -68,17 +68,6 @@ beforeEach(async () => {
   api = await import("./api.js");
 });
 
-function sseResponse(events: string[]): Response {
-  const enc = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const e of events) controller.enqueue(enc.encode(e));
-      controller.close();
-    },
-  });
-  return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
-}
-
 describe("apiMe", () => {
   it("GETs /api/me with the access token and returns the body", async () => {
     responder = () =>
@@ -178,52 +167,3 @@ describe("apiEmbed", () => {
   });
 });
 
-describe("apiGenerateAnswer", () => {
-  const opts = {
-    systemPrompt: "sys",
-    prompt: "prompt",
-    question: "Tell me about yourself",
-    company: "Acme",
-    role: "Engineer",
-  };
-
-  it("accumulates SSE text chunks and calls onChunk per chunk", async () => {
-    responder = (url) => {
-      if (!url.endsWith("/api/answer/generate")) throw new Error(`unexpected URL ${url}`);
-      return sseResponse([
-        'data: {"text":"Hel"}\n\nda', // deliberately split mid-event
-        'ta: {"text":"lo"}\n\ndata: [DONE]\n\n',
-      ]);
-    };
-
-    const chunks: string[] = [];
-    const full = await api.apiGenerateAnswer({ ...opts, onChunk: (c) => chunks.push(c) });
-
-    expect(full).toBe("Hello");
-    expect(chunks).toEqual(["Hel", "lo"]);
-    const body = JSON.parse(calls[0].init!.body as string);
-    expect(body).toMatchObject({ question: "Tell me about yourself", company: "Acme", role: "Engineer" });
-    expect((calls[0].init!.headers as Record<string, string>).Accept).toBe("text/event-stream");
-  });
-
-  it("aborts with an error on a mid-stream error event", async () => {
-    responder = () => sseResponse(['data: {"text":"ok"}\n\n', 'data: {"error":"boom"}\n\n']);
-
-    await expect(api.apiGenerateAnswer(opts)).rejects.toThrow("stream error: boom");
-  });
-
-  it("falls back to a plain (non-SSE) body when the content type differs", async () => {
-    responder = () => new Response("fallback answer", { status: 200, headers: { "content-type": "text/plain" } });
-
-    const chunks: string[] = [];
-    const full = await api.apiGenerateAnswer({ ...opts, onChunk: (c) => chunks.push(c) });
-
-    expect(full).toBe("fallback answer");
-    expect(chunks).toEqual(["fallback answer"]);
-  });
-
-  it("surfaces 402 from the generate call as SubscriptionRequiredError", async () => {
-    responder = () => new Response("{}", { status: 402 });
-    await expect(api.apiGenerateAnswer(opts)).rejects.toBeInstanceOf(api.SubscriptionRequiredError);
-  });
-});

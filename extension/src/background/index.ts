@@ -1,13 +1,18 @@
-// Snag background service worker — local orchestration (plan B3).
+// Snag background service worker — local orchestration (plan B3, revised).
 //
 // The retired local FastAPI backend used to do four things for the
 // extension: (1) classify detected form fields and match them against the
 // profile, (2) assemble the answer-generation prompt context (profile +
 // similar past answers), (3) instruct the content script to write an
 // approved answer into the DOM, and (4) persist approved answers into
-// memory. All of that now runs here against the local IndexedDB — the only
-// network calls left are the three API endpoints in shared/api.ts
-// (/api/me, /api/answer/generate, /api/embed).
+// memory. All of that now runs here against the local IndexedDB.
+//
+// LLM generation is BYOK (revised plan): the subscription funds Bedrock
+// embeddings and gates using Snag at all, but the user's own Anthropic/
+// OpenAI/Groq/Ollama key (llm/client.ts, configured in Settings) is what
+// actually generates answers — the backend never sees the prompt or holds
+// a provider key. The two network calls left are /api/me (license check)
+// and /api/embed (Bedrock Titan, still subscription-gated).
 //
 // Message flow (unchanged from the pilot, new transport):
 //   sidebar iframe --postMessage--> content script --runtime--> background
@@ -16,21 +21,15 @@
 // The sidebar never sees tokens; it gets `publicSession` (sub/email only)
 // plus subscription status from /api/me.
 
-import {
-  apiEmbed,
-  apiGenerateAnswer,
-  apiMe,
-  ApiError,
-  AuthError,
-  RateLimitedError,
-  SubscriptionRequiredError,
-} from "../shared/api.js";
+import { apiEmbed, apiMe, ApiError, AuthError, RateLimitedError, SubscriptionRequiredError } from "../shared/api.js";
 import { getSession, isFresh, refreshSession, signOut, startSignIn, type Session } from "../shared/auth.js";
 import { classifyFields, matchStaticFields, type FieldInfo } from "../classify.js";
 import { ANSWER_SYSTEM, buildAnswerPrompt, detectQuestionType, type MemoryEntry } from "../shared/prompt.js";
 import { buildCheckoutUrl } from "../shared/pricing.js";
 import { findSimilar } from "../similarity.js";
 import { deleteAnswer, getAnswers, getProfile, saveAnswer, setProfileField, updateAnswer } from "../storage/db.js";
+import { getSettings } from "../shared/config.js";
+import { llmGenerateStream } from "../llm/client.js";
 
 interface RuntimeMessage {
   type: string;
@@ -97,7 +96,7 @@ async function pushAuthUpdate(tabId?: number, error?: string): Promise<void> {
 
 // --- error mapping (plan B4: distinct 402 / 429 / auth UI states) -----------
 
-type AnswerErrorCode = "auth" | "subscription_required" | "rate_limited" | "error";
+type AnswerErrorCode = "auth" | "subscription_required" | "rate_limited" | "no_api_key" | "error";
 
 function errorCodeFor(e: unknown): AnswerErrorCode {
   if (e instanceof SubscriptionRequiredError) return "subscription_required";
@@ -110,9 +109,19 @@ function errorCodeFor(e: unknown): AnswerErrorCode {
 const ERROR_MESSAGES: Record<AnswerErrorCode, string> = {
   subscription_required: "Your subscription isn't active. Subscribe to generate answers.",
   rate_limited: "You've hit today's usage limit. Try again tomorrow.",
+  no_api_key: "Add your AI provider's API key in Settings to generate answers.",
   auth: "You're signed out or your session expired. Sign in again to continue.",
   error: "Couldn't generate an answer. Check your connection and try again.",
 };
+
+/** License gate (revised plan): using Snag at all requires an active
+ * subscription, independent of which LLM path generates the text — so this
+ * is checked explicitly rather than piggybacked on the /api/embed call
+ * (which is skipped entirely when there's no memory yet to search). */
+async function hasActiveSubscription(): Promise<boolean> {
+  const sub = await fetchSubscription();
+  return sub?.status === "active";
+}
 
 // --- page scan ---------------------------------------------------------------
 
@@ -184,12 +193,26 @@ async function handleAnswerGenerate(tabId: number, payload: Record<string, unkno
     return;
   }
 
+  // License gate first, before spending anything (an embed call, an LLM
+  // call) — using Snag at all requires an active subscription.
+  if (!(await hasActiveSubscription())) {
+    sendErrorDraft(tabId, { ...base, questionType: fallbackType }, "subscription_required");
+    return;
+  }
+
+  const settings = await getSettings();
+  if (settings.provider !== "ollama" && !settings.apiKey.trim()) {
+    sendErrorDraft(tabId, { ...base, questionType: fallbackType }, "no_api_key");
+    return;
+  }
+
   try {
     const profile = await getProfile();
     const answers = await getAnswers();
 
     // Semantic memory lookup needs a query embedding, which costs one gated
-    // /api/embed call — skip it entirely when there's nothing to match yet.
+    // /api/embed call (Bedrock) — skip it entirely when there's nothing to
+    // match yet.
     let memories: MemoryEntry[] = [];
     if (answers.some((a) => a.embedding && a.embedding.length > 0)) {
       const queryEmbedding = await apiEmbed(question);
@@ -209,18 +232,18 @@ async function handleAnswerGenerate(tabId: number, payload: Record<string, unkno
       role,
     });
 
+    // BYOK: the user's own provider key generates the answer — the backend
+    // never sees this prompt.
     let fullText = "";
-    await apiGenerateAnswer({
-      systemPrompt: ANSWER_SYSTEM,
-      prompt,
-      question,
-      company,
-      role,
-      questionType,
-      onChunk: (chunk) => {
-        fullText += chunk;
-        sendToTab(tabId, { type: "answer:stream", payload: { fieldId, chunk, partial: fullText } });
-      },
+    await new Promise<void>((resolve, reject) => {
+      llmGenerateStream(ANSWER_SYSTEM, prompt, settings, {
+        onChunk: (chunk) => {
+          fullText += chunk;
+          sendToTab(tabId, { type: "answer:stream", payload: { fieldId, chunk, partial: fullText } });
+        },
+        onDone: () => resolve(),
+        onError: (error) => reject(new Error(error)),
+      }).catch(reject);
     });
 
     // The draft is NOT saved to memory here. It becomes memory only when the
@@ -404,14 +427,13 @@ export function handleRuntimeMessage(message: RuntimeMessage, sender: { tab?: { 
     }
 
     case "resume:extract":
-      // Parked (plan B5): resume extraction needs an LLM call, which in the
-      // published build goes through the subscription-gated backend. It comes
-      // back with the local-model (BYOK) mode.
+      // Parked: not yet reimplemented against the local storage layer /
+      // BYOK LLM client (a separate feature from the transport/BYOK pivot).
       sendToTab(tabId, {
         type: "resume:extracted",
         payload: {
           fields: null,
-          error: "Resume import is coming back with the local-model mode. For now, add your profile fields manually in the Profile section.",
+          error: "Resume import isn't available yet. For now, add your profile fields manually in the Profile section.",
         },
       });
       return;
