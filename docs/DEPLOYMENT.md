@@ -38,15 +38,30 @@ source .venv/Scripts/activate
 
 Then `python app.py` (and `cdk`) resolve to the venv.
 
-### Gotcha 2: ap-south-1 is an opt-in region
+### Gotcha 2: `OptInRequired` on a brand-new AWS account
 
-First deploy to ap-south-1 fails with `OptInRequired` ("The AWS Access Key
-Id needs a subscription for the service") until the account opts in:
+First deploy can fail with `OptInRequired` ("The AWS Access Key Id needs a
+subscription for the service") — this is **not** a per-region opt-in
+toggle (`ap-south-1`/Mumbai is not one of AWS's opt-in regions, unlike
+e.g. `ap-east-1` or `il-central-1`, which do need one). It's a temporary,
+**account-wide** identity/fraud-verification hold on a brand-new account
+that blocks most services in every region simultaneously — confirmed by
+the fact that the identical error hit `us-east-1` too, `iam:ListUsers`
+kept working throughout (IAM is exempt), and even `aws ce
+get-cost-and-usage` (Cost Explorer, unrelated to CloudFormation) was
+blocked with the same error. It normally clears within a few hours,
+occasionally up to ~24-48h. Check the signup email / Billing console for a
+verification prompt, and just retry once it clears — nothing on the deploy
+side needs to change.
 
-AWS Console → **Account Management** (top-right account menu) →
-**AWS Regions** → **Request access to additional AWS Regions** → check
-**Asia Pacific (Mumbai)** → Request. Usually minutes for new accounts,
-occasionally a few hours. Retry bootstrap once it shows as available.
+### Gotcha 3: Bedrock's separate, additional verification hold
+
+Even after the account-wide hold above clears, a first `bedrock-runtime
+invoke-model` call can still fail with `AccessDeniedException: Your
+account is currently being verified...` — this is a **second, Bedrock-
+specific** fraud check, independent of the general account verification.
+Per AWS's own error message it "normally takes less than 2 hours." Retry
+the smoke test's embed call once that clears.
 
 ## First deploy
 
@@ -59,7 +74,9 @@ npx cdk deploy --region ap-south-1
 ```
 
 `cdk deploy` creates the whole stack (Cognito pool + client, DynamoDB
-table, 4 SSM SecureString placeholders, 2 HTTP APIs, 2 ARM Lambdas).
+table, 2 HTTP APIs, 2 ARM Lambdas). No SSM parameters are created by CDK —
+CloudFormation can't create `SecureString` parameters at all, so the
+Paddle secrets below are set directly via the AWS CLI instead.
 The `ExtensionCallbackUrl` parameter defaults to the
 `devtools-window.chromiumapp.org` callback, which is correct for
 developer/unpacked builds — no prompt needed. Pass the published
@@ -78,15 +95,14 @@ You need: **`ApiUrl`**, **`WebhookApiUrl`**, **`UserPoolId`**,
 
 ## Post-deploy wiring
 
-### 1. Provider secrets (required for answer generation / embeddings)
+### 1. No provider secrets needed for AI at all
 
-```bash
-aws ssm put-parameter --region ap-south-1 --name /snag/anthropic_api_key --type SecureString --value "<key>"
-aws ssm put-parameter --region ap-south-1 --name /snag/openai_api_key    --type SecureString --value "<key>"
-```
-
-(Paddle keys are added in the Paddle step; the stack deploys fine before
-that — the placeholders just keep the API 500-ing on gated calls.)
+Answer generation is BYOK (the extension calls Anthropic/OpenAI/Groq/Ollama
+directly with the user's own key — nothing to configure here), and
+embeddings use Bedrock, which is IAM-only (no key/secret). The only secrets
+this stack needs are Paddle's, added in the Paddle step below — the stack
+deploys and `/api/embed` works fine before that (Paddle just isn't wired
+up for billing yet).
 
 ### 2. Extension auth config
 
@@ -106,7 +122,7 @@ the published `chrome-extension://` callback after CWS submission).
 
 ### 3. Paddle (when taking payments)
 
-1. Vendor account → create the single **$10/month** subscription item.
+1. Vendor account → create the single **$5/month** subscription item.
 2. Checkout **confirmation page** →
    `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/checkout-done.html`
 3. Add a webhook for `subscription.created` / `subscription.updated` /
@@ -137,8 +153,13 @@ the published `chrome-extension://` callback after CWS submission).
      --item '{"pk":{"S":"USER#<sub>"}, "sk":{"S":"SUBSCRIPTION"}, "status":{"S":"active"}, "currentPeriodEnd":{"S":"2026-12-31T00:00:00Z"}}'
    ```
 
-4. Generate an answer. Expected: 402/`subscription_required` before the
-   put, a streamed draft after. Delete the item to re-test the gate.
+4. Approve a drafted answer (this is what triggers the license-gated
+   `/api/embed` call). Expected: the sidebar shows the subscribe wall / a
+   "subscription required" error before the put, and the answer saves with
+   a real embedding after. Delete the item to re-test the gate. Note:
+   answer *generation* itself is BYOK and works regardless of subscription
+   status (nothing to test against this backend there) — only `/api/embed`
+   is backend-gated.
 
 ## Re-deploys
 
@@ -165,7 +186,8 @@ useful gate.
 | Symptom | Cause / fix |
 |---|---|
 | `ModuleNotFoundError: No module named 'aws_cdk'` during cdk | System Python on PATH — activate the venv (Gotcha 1) |
-| `OptInRequired` on bootstrap/deploy | Region not opted in (Gotcha 2) |
+| `OptInRequired` on bootstrap/deploy/any AWS CLI call | Brand-new account, general verification hold — account-wide, not region-specific (Gotcha 2) |
+| `AccessDeniedException: ...account is currently being verified` on `bedrock-runtime invoke-model` | Bedrock's separate verification hold (Gotcha 3) |
 | `cdk deploy` prompts for `ExtensionCallbackUrl` | Pass `--parameters '{"ExtensionCallbackUrl": "..."}'` |
 | Extension: `fetch failed` / CORS in the background console | `authConfig.apiBaseUrl` region/host mismatch the manifest's `host_permissions` — both regions are listed; make sure the URL matches one |
 | `402 subscription_required` persists after put | Wrong table, wrong `sub`, or `status` not exactly `"active"` |

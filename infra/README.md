@@ -3,8 +3,15 @@
 Thin, stateless proxy backend for the Snag Chrome extension. It is **not** a
 data store: all durable user data (profile, resumes, answer memory, embeddings)
 lives in the extension's local IndexedDB. The only things authoritative
-server-side are **subscription status** and **usage counters** (DynamoDB), plus
-the secrets the LLM provider proxy needs (SSM Parameter Store).
+server-side are **subscription status** and **usage counters** (DynamoDB).
+
+LLM *generation* is BYOK — the extension calls Anthropic/OpenAI/Groq/Ollama
+directly with the user's own key, so this backend never sees a prompt and
+holds no LLM provider key at all. The subscription instead gates (a) using
+Snag at all (a license check via `/api/me`) and (b) the one thing still
+centralized: semantic "similar past answers" matching via **Amazon Bedrock
+Titan Embeddings** (`/api/embed`), which is IAM-only — no external API key,
+no secret in SSM.
 
 ## Layout
 
@@ -16,7 +23,7 @@ infra/
 ├── snag_infra/
 │   └── stack.py                 # SnagStack: Cognito, DynamoDB, SSM, 2 HTTP APIs, 2 Lambdas
 └── lambdas/
-    ├── snag_api/main.py         # /api/me + /api/answer/generate (SSE) + /api/embed — subscription-gated
+    ├── snag_api/main.py         # /api/me (license check) + /api/embed (Bedrock Titan) — subscription-gated
     └── snag_paddle_webhook/main.py  # Paddle webhook: HMAC-verified, idempotent subscription event processing
 ```
 
@@ -26,10 +33,10 @@ infra/
 |---|---|
 | Cognito User Pool + public OAuth client | Hosted UI, PKCE authorization-code flow (no client secret) |
 | DynamoDB `SnagBillingTable` | on-demand, `pk`/`sk` keys — subscription + usage counters only |
-| SSM Parameter Store (SecureString) | `/snag/anthropic_api_key`, `/snag/openai_api_key`, `/snag/paddle_api_key`, `/snag/paddle_webhook_secret` |
+| SSM Parameter Store (SecureString) | `/snag/paddle_api_key`, `/snag/paddle_webhook_secret` (no LLM/embedding provider keys — Bedrock is IAM-only) |
 | API Gateway **HTTP** API `SnagApi` | catch-all route gated by a Cognito **JWT authorizer** — the extension's `/api/*` calls |
 | API Gateway **HTTP** API `SnagWebhookApi` | catch-all route, unauthenticated (HMAC verified in-Lambda) — Paddle webhooks |
-| Lambda `snag-api` | ARM, 256MB, 60s — reads subscription, writes usage counters, reads 2 provider keys from SSM |
+| Lambda `snag-api` | ARM, 256MB, 15s — reads subscription, writes usage counters, calls Bedrock via IAM (`bedrock:InvokeModel`, no secret) |
 | Lambda `snag-paddle-webhook` | ARM, 128MB, reads the webhook secret from SSM |
 
 ## Prerequisites
@@ -57,11 +64,12 @@ cdk deploy               # deploy (needs AWS creds; ExtensionCallbackUrl has a d
 ## Secrets (set out-of-band, never in CI)
 
 ```bash
-aws ssm put-parameter --name /snag/anthropic_api_key --type SecureString --value "<key>"
-aws ssm put-parameter --name /snag/openai_api_key    --type SecureString --value "<key>"
 aws ssm put-parameter --name /snag/paddle_api_key    --type SecureString --value "<key>"
 aws ssm put-parameter --name /snag/paddle_webhook_secret --type SecureString --value "<secret>"
 ```
+
+No Anthropic/OpenAI key is needed here — generation is BYOK (the extension
+holds the user's own key) and embeddings use Bedrock (IAM-only).
 
 ## DynamoDB item shape
 
@@ -78,24 +86,23 @@ claims is the only per-user key.
 
 | Route | Gating | Behavior |
 |---|---|---|
-| `GET /api/me` | — | `{sub, email, subscriptionStatus, currentPeriodEnd}` |
-| `POST /api/answer/generate` | 402 unless `status: active`; 429 at 300 calls/day | Anthropic `claude-sonnet-4-5`, response is `text/event-stream`: `data: {"text": "..."}` events + `data: [DONE]` |
-| `POST /api/embed` | 402 unless `status: active`; 429 at 500 calls/day | OpenAI `text-embedding-3-small` → `{"embedding": [...]}` |
+| `GET /api/me` | — | `{sub, email, subscriptionStatus, currentPeriodEnd}` — the license check the extension gates all usage on |
+| `POST /api/embed` | 402 unless `status: active`; 429 at 500 calls/day | Bedrock `amazon.titan-embed-text-v2:0` → `{"embedding": [...]}` |
 
-The daily ceilings (`GENERATE_CAP_PER_DAY` / `EMBED_CAP_PER_DAY` in
-`main.py`) are abuse/cost protection only, not a marketed limit. Usage
-counters live in `USAGE#<YYYY-MM>` items (plan A2): new month = new item,
-the daily window is re-baselined lazily via conditional updates.
+LLM generation (`answer:generate` in the extension) never reaches this
+backend at all — see `extension/src/llm/client.ts`, which calls the user's
+own configured provider directly. The daily ceiling on `/api/embed`
+(`EMBED_CAP_PER_DAY` in `main.py`) is abuse/cost protection on the Bedrock
+spend only, not a marketed limit. Usage counters live in `USAGE#<YYYY-MM>`
+items: new month = new item, the daily window is re-baselined lazily via
+conditional updates.
 
-**Why a plain handler, not FastAPI+Mangum** (revises the Phase 1 note):
-Mangum's ASGI adapter buffers the full response body in the classic Lambda
-path, so it would add three dependencies and asset-bundling risk for zero
-streaming benefit. The SSE *contract* is identical either way; incremental
-(token-by-token) delivery is a Lambda + API Gateway response-streaming
-runtime feature to enable/verify at deploy time — it changes no request or
-response contract here. Stdlib-only (`urllib` for provider calls) also keeps
-the zip bundling trivial from any host (Windows included) for the ARM_64
-runtime.
+**Why a plain handler, not FastAPI+Mangum**: with generation gone (BYOK),
+there's no streaming response left in this backend at all — `/api/embed`
+is a single small JSON round-trip. A plain handler keeps the Lambda
+stdlib+boto3-only (no Mangum/FastAPI/Pydantic dependencies to bundle),
+which keeps zip packaging trivial from any host (Windows included) for the
+ARM_64 runtime.
 
 ## Deploy-time configuration checklist
 
@@ -112,7 +119,7 @@ the infra outputs (`ApiUrl`, `WebhookApiUrl`, `UserPoolId`,
      known before submission; private key kept outside the repo at
      `C:\Users\Sailesh\snag-extension-key.pem`)
 2. **Paddle vendor account**:
-   - Create the single $10/month subscription item; copy its checkout URL
+   - Create the single $5/month subscription item; copy its checkout URL
      into `extension/src/shared/pricing.ts` (`PADDLE_CHECKOUT_URL`). The
      extension appends `custom_data[cognitoSub]=<sub>` at runtime, which the
      webhook uses to link the subscription to the Cognito user.
@@ -130,10 +137,7 @@ the infra outputs (`ApiUrl`, `WebhookApiUrl`, `UserPoolId`,
    `extension/src/shared/authConfig.ts` (apiBaseUrl, cognitoDomain,
    clientId), the Paddle URLs above, and
    `ui/src/components/FeedbackModal.tsx` (`FEEDBACK_EMAIL`).
-4. **Lambda response streaming** — enable on `snag-api` (Lambda + API
-   Gateway runtime feature) so `/api/answer/generate` streams
-   token-by-token instead of returning the buffered SSE body.
-5. **CfnParameter `ExtensionCallbackUrl`** — pass the published
+4. **CfnParameter `ExtensionCallbackUrl`** — pass the published
    `chrome-extension://` callback URL on (re)deploy once the store ID exists
    (or set the `EXTENSION_CALLBACK_URL` GitHub secret so CI deploys pass it
    automatically — see below).

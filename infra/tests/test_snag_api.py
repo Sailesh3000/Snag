@@ -1,4 +1,10 @@
-"""Unit tests for infra/lambdas/snag_api/main.py (boto3 + HTTP mocked)."""
+"""Unit tests for infra/lambdas/snag_api/main.py (boto3 mocked).
+
+LLM generation is BYOK (extension calls Anthropic/OpenAI directly) — this
+backend only ever does a license check (/api/me) and Bedrock-backed
+embeddings (/api/embed), so there is no provider-key/SSM surface to test
+here at all; Bedrock is IAM-only.
+"""
 import importlib.util
 import json
 import re
@@ -45,15 +51,6 @@ class _FakeTable:
         return outcome
 
 
-class _FakeSsm:
-    def __init__(self, secrets=None):
-        self.secrets = secrets or {}
-
-    def get_parameter(self, Name, WithDecryption):
-        name = Name.rsplit("/", 1)[-1]
-        return {"Parameter": {"Value": self.secrets.get(name, "REPLACE_ME_OUT_OF_BAND")}}
-
-
 @pytest.fixture()
 def main(monkeypatch):
     # The Lambda reads SNAG_TABLE at import time and constructs boto3
@@ -63,10 +60,9 @@ def main(monkeypatch):
     yield _load_module("snag_api_main", LAMBDA_MAIN)
 
 
-def _patch_infra(monkeypatch, main, table=None, secrets=None):
+def _patch_infra(monkeypatch, main, table=None):
     if table is not None:
         monkeypatch.setattr(main, "TABLE", table)
-    monkeypatch.setattr(main, "ssm", _FakeSsm(secrets))
 
 
 def _event(method, path, sub="user-1", email="a@b.c", body=None):
@@ -136,143 +132,6 @@ def test_unknown_path_is_404(main, monkeypatch):
     assert _body(resp)["path"] == "/api/nope"
 
 
-# --- POST /api/answer/generate -------------------------------------------------
-
-def test_generate_requires_subscription(main, monkeypatch):
-    for sk in (None, {"status": "cancelled"}):
-        items = {("USER#user-1", "SUBSCRIPTION"): sk} if sk else {}
-        table = _FakeTable(items)
-        _patch_infra(monkeypatch, main, table=table)
-
-        resp = main.handler(_event("POST", "/api/answer/generate", body={"prompt": "hi"}), None)
-
-        assert resp["statusCode"] == 402
-        assert _body(resp)["error"] == "subscription_required"
-        assert table.updates == []  # no usage recorded for a denied call
-
-
-def test_generate_without_sub_is_401(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_FakeTable())
-
-    resp = main.handler(_event("POST", "/api/answer/generate", sub="", body={"prompt": "hi"}), None)
-
-    assert resp["statusCode"] == 401
-
-
-def test_generate_requires_prompt(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_active_sub_table())
-
-    resp = main.handler(_event("POST", "/api/answer/generate", body={"prompt": "   "}), None)
-
-    assert resp["statusCode"] == 400
-    assert _body(resp)["error"] == "missing_prompt"
-
-
-def test_generate_without_provider_key_is_503(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_active_sub_table(), secrets={})
-
-    resp = main.handler(
-        _event("POST", "/api/answer/generate", body={"prompt": "Tell me about yourself"}), None)
-
-    assert resp["statusCode"] == 503
-    assert _body(resp)["error"] == "provider_not_configured"
-
-
-def test_generate_streams_sse_from_anthropic_chunks(main, monkeypatch):
-    table = _active_sub_table()
-    _patch_infra(monkeypatch, main, table=table, secrets={"anthropic_api_key": "k-ant"})
-
-    seen = {}
-
-    def fake_stream(api_key, system, prompt):
-        seen.update(api_key=api_key, system=system, prompt=prompt)
-        return ["I shipped ", "snag."], None
-
-    monkeypatch.setattr(main, "_anthropic_stream", fake_stream)
-
-    resp = main.handler(
-        _event("POST", "/api/answer/generate",
-               body={"systemPrompt": "sys", "prompt": "Tell me about yourself", "question": "Tell me about yourself"}),
-        None,
-    )
-
-    assert resp["statusCode"] == 200
-    assert resp["headers"]["Content-Type"] == "text/event-stream"
-    assert 'data: {"text": "I shipped "}' in resp["body"]
-    assert 'data: {"text": "snag."}' in resp["body"]
-    assert resp["body"].endswith("data: [DONE]\n\n")
-    assert seen == {"api_key": "k-ant", "system": "sys", "prompt": "Tell me about yourself"}
-    # Usage was recorded before the provider call.
-    assert len(table.updates) == 1
-
-
-def test_generate_provider_error_is_502(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_active_sub_table(), secrets={"anthropic_api_key": "k-ant"})
-    monkeypatch.setattr(main, "_anthropic_stream", lambda k, s, p: (None, (502, "provider error 429 overloaded")))
-
-    resp = main.handler(_event("POST", "/api/answer/generate", body={"prompt": "x"}), None)
-
-    assert resp["statusCode"] == 502
-    assert "provider error 429" in _body(resp)["error"]
-
-
-def test_generate_daily_cap_is_429_with_resets_at(main, monkeypatch):
-    table = _FakeTable(
-        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
-        update_results=[{"Attributes": {"generateDayCount": 301}}],
-    )
-    _patch_infra(monkeypatch, main, table=table, secrets={"anthropic_api_key": "k-ant"})
-
-    resp = main.handler(_event("POST", "/api/answer/generate", body={"prompt": "x"}), None)
-
-    assert resp["statusCode"] == 429
-    err = _body(resp)
-    assert err["error"] == "rate_limited"
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T00:00:00Z", err["resetsAt"])
-
-
-def test_generate_bumps_usage_atomically_same_day(main, monkeypatch):
-    import datetime
-
-    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-    this_month = today[:7]
-    table = _FakeTable(
-        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
-        update_results=[{"Attributes": {"generateDayCount": 1}}],
-    )
-    _patch_infra(monkeypatch, main, table=table, secrets={"anthropic_api_key": "k-ant"})
-    monkeypatch.setattr(main, "_anthropic_stream", lambda k, s, p: (["ok"], None))
-
-    resp = main.handler(_event("POST", "/api/answer/generate", body={"prompt": "x"}), None)
-
-    assert resp["statusCode"] == 200
-    assert len(table.updates) == 1
-    update = table.updates[0]
-    assert update["Key"] == {"pk": "USER#user-1", "sk": f"USAGE#{this_month}"}
-    assert update["ConditionExpression"] == "generateDay = :today"
-    assert update["ExpressionAttributeValues"]["today"] == today
-    assert update["ReturnValues"] == "UPDATED_NEW"
-    assert "generateCount = generateCount + :one" in update["UpdateExpression"]
-
-
-def test_generate_day_boundary_rebaselines_then_counts(main, monkeypatch):
-    table = _FakeTable(
-        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
-        update_results=[_ccf(), {"Attributes": {"generateDayCount": 1}}],
-    )
-    _patch_infra(monkeypatch, main, table=table, secrets={"anthropic_api_key": "k-ant"})
-    monkeypatch.setattr(main, "_anthropic_stream", lambda k, s, p: (["ok"], None))
-
-    resp = main.handler(_event("POST", "/api/answer/generate", body={"prompt": "x"}), None)
-
-    assert resp["statusCode"] == 200
-    assert len(table.updates) == 2
-    first, second = table.updates
-    assert first["ConditionExpression"] == "generateDay = :today"
-    assert second["ConditionExpression"] == "attribute_not_exists(generateDay) OR generateDay <> :today"
-    assert "generateDay = :today" in second["UpdateExpression"]
-
-
 # --- POST /api/embed -----------------------------------------------------------
 
 def test_embed_requires_subscription(main, monkeypatch):
@@ -292,48 +151,88 @@ def test_embed_requires_text(main, monkeypatch):
     assert _body(resp)["error"] == "missing_text"
 
 
-def test_embed_without_provider_key_is_503(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_active_sub_table(), secrets={})
-
-    resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
-
-    assert resp["statusCode"] == 503
-
-
-def test_embed_returns_openai_vector(main, monkeypatch):
+def test_embed_returns_bedrock_titan_vector(main, monkeypatch):
     table = _active_sub_table()
-    _patch_infra(monkeypatch, main, table=table, secrets={"openai_api_key": "k-oai"})
+    _patch_infra(monkeypatch, main, table=table)
 
     seen = {}
 
-    def fake_http_json(url, payload, headers, timeout=None):
-        seen.update(url=url, payload=payload, headers=headers)
-        return {"data": [{"embedding": [0.1, -0.2, 0.3]}]}
+    def fake_titan_embed(text):
+        seen["text"] = text
+        return [0.1, -0.2, 0.3], None
 
-    monkeypatch.setattr(main, "_http_json", fake_http_json)
+    monkeypatch.setattr(main, "_titan_embed", fake_titan_embed)
 
     resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
 
     assert resp["statusCode"] == 200
     assert _body(resp) == {"embedding": [0.1, -0.2, 0.3]}
-    assert seen["url"] == "https://api.openai.com/v1/embeddings"
-    assert seen["payload"]["model"] == "text-embedding-3-small"
-    assert seen["payload"]["input"] == "hello"
-    assert seen["headers"]["Authorization"] == "Bearer k-oai"
+    assert seen["text"] == "hello"
     assert len(table.updates) == 1
     assert "embedCount = embedCount + :one" in table.updates[0]["UpdateExpression"]
 
 
 def test_embed_provider_error_is_502(main, monkeypatch):
-    import urllib.error
-
-    class _FakeHTTPError(urllib.error.HTTPError):
-        def __init__(self):
-            super().__init__("https://api.openai.com/v1/embeddings", 401, "unauthorized", {}, None)
-
-    _patch_infra(monkeypatch, main, table=_active_sub_table(), secrets={"openai_api_key": "k-oai"})
-    monkeypatch.setattr(main, "_http_json", lambda *a, **k: (_ for _ in ()).throw(_FakeHTTPError()))
+    _patch_infra(monkeypatch, main, table=_active_sub_table())
+    monkeypatch.setattr(main, "_titan_embed", lambda text: (None, (502, "bedrock error AccessDeniedException: nope")))
 
     resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
 
     assert resp["statusCode"] == 502
+    assert "bedrock error" in _body(resp)["error"]
+
+
+def test_embed_daily_cap_is_429_with_resets_at(main, monkeypatch):
+    table = _FakeTable(
+        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
+        update_results=[{"Attributes": {"embedDayCount": 501}}],
+    )
+    _patch_infra(monkeypatch, main, table=table)
+
+    resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
+
+    assert resp["statusCode"] == 429
+    err = _body(resp)
+    assert err["error"] == "rate_limited"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T00:00:00Z", err["resetsAt"])
+
+
+def test_embed_bumps_usage_atomically_same_day(main, monkeypatch):
+    import datetime
+
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    this_month = today[:7]
+    table = _FakeTable(
+        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
+        update_results=[{"Attributes": {"embedDayCount": 1}}],
+    )
+    _patch_infra(monkeypatch, main, table=table)
+    monkeypatch.setattr(main, "_titan_embed", lambda text: ([0.0], None))
+
+    resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
+
+    assert resp["statusCode"] == 200
+    assert len(table.updates) == 1
+    update = table.updates[0]
+    assert update["Key"] == {"pk": "USER#user-1", "sk": f"USAGE#{this_month}"}
+    assert update["ConditionExpression"] == "embedDay = :today"
+    assert update["ExpressionAttributeValues"]["today"] == today
+    assert update["ReturnValues"] == "UPDATED_NEW"
+
+
+def test_embed_day_boundary_rebaselines_then_counts(main, monkeypatch):
+    table = _FakeTable(
+        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
+        update_results=[_ccf(), {"Attributes": {"embedDayCount": 1}}],
+    )
+    _patch_infra(monkeypatch, main, table=table)
+    monkeypatch.setattr(main, "_titan_embed", lambda text: ([0.0], None))
+
+    resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
+
+    assert resp["statusCode"] == 200
+    assert len(table.updates) == 2
+    first, second = table.updates
+    assert first["ConditionExpression"] == "embedDay = :today"
+    assert second["ConditionExpression"] == "attribute_not_exists(embedDay) OR embedDay <> :today"
+    assert "embedDay = :today" in second["UpdateExpression"]

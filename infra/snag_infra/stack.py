@@ -92,16 +92,20 @@ class SnagStack(Stack):
         )
 
         # --- SSM Parameter Store (SecureString secrets) ---------------------
+        # LLM generation is BYOK (extension calls Anthropic/OpenAI directly
+        # with the user's own key) — this backend holds no LLM provider key
+        # at all. Embeddings use Bedrock (IAM-only, no secret needed either).
+        # The only secret left is the Paddle webhook signing secret.
         # CloudFormation cannot create SecureString parameters (AWS::SSM::Parameter
-        # only supports String/StringList), so these are NOT CDK-managed resources.
-        # Set the real values once, out-of-band, after this stack deploys:
-        #   aws ssm put-parameter --name /snag/anthropic_api_key --type SecureString --value <key>
-        #   aws ssm put-parameter --name /snag/openai_api_key --type SecureString --value <key>
-        #   aws ssm put-parameter --name /snag/paddle_api_key --type SecureString --value <key>
+        # only supports String/StringList), so it is NOT a CDK-managed resource.
+        # Set the real value once, out-of-band, after this stack deploys:
         #   aws ssm put-parameter --name /snag/paddle_webhook_secret --type SecureString --value <secret>
-        # The IAM grants below reference these by ARN only, so the stack deploys
-        # fine before the parameters exist — the Lambdas just fail at runtime
-        # (ParameterNotFound) until the values above are set.
+        # (paddle_api_key is not read by any Lambda yet — only add it if a
+        # future feature needs to call Paddle's API directly, e.g. querying
+        # subscription status server-side instead of relying on webhooks.)
+        # The IAM grant below references the ARN only, so the stack deploys
+        # fine before the parameter exists — the webhook Lambda just fails at
+        # runtime (ParameterNotFound) until the value above is set.
 
         # --- Lambdas -------------------------------------------------------
         snag_api = _lambda.Function(
@@ -112,22 +116,18 @@ class SnagStack(Stack):
             environment={"SNAG_TABLE": table.table_name},
             architecture=_lambda.Architecture.ARM_64,
             memory_size=256,
-            # 60s: /api/answer/generate blocks while the LLM streams its
-            # completion (55s provider timeout inside the handler).
-            timeout=Duration.seconds(60),
+            timeout=Duration.seconds(15),
             log_retention=logs.RetentionDays.ONE_MONTH,
-            description="Snag API: /api/me, /api/answer/generate (SSE), /api/embed — subscription-gated, stateless",
+            description="Snag API: /api/me (license check), /api/embed (Bedrock Titan) — subscription-gated, stateless",
         )
-        # read_write: generate/embed atomically increment USAGE#<YYYY-MM>.
+        # read_write: embed atomically increments USAGE#<YYYY-MM>.
         table.grant_read_write_data(snag_api)
-        # Provider keys are read from SSM at runtime (main.py), not via the
-        # function environment, so they stay out of `aws lambda get-function`.
-        # L1 CfnParameter has no grant helper, so grant GetParameter per key.
+        # Bedrock is IAM-only (no API key/secret at all) — LLM generation is
+        # BYOK from the extension, so this function holds no provider key.
         snag_api.role.add_to_policy(iam.PolicyStatement(
-            actions=["ssm:GetParameter"],
+            actions=["bedrock:InvokeModel"],
             resources=[
-                f"arn:aws:ssm:{self.region}:{self.account}:parameter/snag/anthropic_api_key",
-                f"arn:aws:ssm:{self.region}:{self.account}:parameter/snag/openai_api_key",
+                f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-embed-text-v2:0",
             ],
         ))
 
@@ -153,8 +153,8 @@ class SnagStack(Stack):
 
         # --- API Gateway: two HTTP APIs ------------------------------------
         # SnagApi (JWT-gated): the Cognito JWT authorizer guards the catch-all
-        # route -> snag-api. The extension calls /api/me, /api/answer/generate,
-        # /api/embed here.
+        # route -> snag-api. The extension calls /api/me and /api/embed here;
+        # LLM generation is BYOK and never touches this backend.
         # SnagWebhookApi (unauthenticated): catch-all -> snag-paddle-webhook.
         # Paddle signs the request body with HMAC (verified in-Lambda), so this
         # API must not require a JWT. In this CDK version a single API's default
