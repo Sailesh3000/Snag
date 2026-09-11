@@ -23,7 +23,6 @@ from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as _lambda
 from aws_cdk import aws_logs as logs
-from aws_cdk import aws_ssm as ssm
 
 LAMBDA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "lambdas")
 
@@ -77,46 +76,32 @@ class SnagStack(Stack):
         )
 
         # --- DynamoDB (tiny, single-purpose) -------------------------------
+        # Webhook idempotency items (WEBHOOK#<id>/RECEIVED) carry a `ttl` so
+        # retried Paddle deliveries stay deduplicated for ~30 days and then
+        # age out — no cleanup job needed. `ttl` is not a key attribute, so it
+        # must NOT appear in AttributeDefinitions (DynamoDB rejects a mismatch
+        # between AttributeDefinitions and the actual key schema/indexes) —
+        # time_to_live_attribute alone is sufficient to enable it.
         table = ddb.Table(
             self, "SnagBillingTable",
             partition_key=ddb.Attribute(name="pk", type=ddb.AttributeType.STRING),
             sort_key=ddb.Attribute(name="sk", type=ddb.AttributeType.STRING),
             billing_mode=ddb.BillingMode.PAY_PER_REQUEST,  # on-demand
+            time_to_live_attribute="ttl",
             removal_policy=RemovalPolicy.DESTROY,
         )
-        # Webhook idempotency items (WEBHOOK#<id>/RECEIVED) carry a TTL so
-        # retried Paddle deliveries stay deduplicated for ~30 days and then
-        # age out — no cleanup job. This CDK version's Table L2 exposes
-        # time_to_live_attribute but never wires it into the template, so the
-        # attribute definition + TTL spec are applied as raw overrides.
-        cfn_table = table.node.find_child("Resource")
-        cfn_table.add_override(
-            "Properties.AttributeDefinitions",
-            [
-                {"AttributeName": "pk", "AttributeType": "S"},
-                {"AttributeName": "sk", "AttributeType": "S"},
-                {"AttributeName": "ttl", "AttributeType": "N"},
-            ],
-        )
-        cfn_table.add_override(
-            "Properties.TimeToLiveSpecification",
-            {"AttributeName": "ttl", "Enabled": True},
-        )
 
-        # --- SSM Parameter Store (SecureString placeholders) ---------------
-        # Real values are set out-of-band via `aws ssm put-parameter`; the
-        # placeholders keep the stack deployable without pre-creating secrets.
-        # Lambdas read these at runtime via boto3 (granted per-parameter below),
-        # which keeps the secret out of the function environment and therefore
-        # out of `aws lambda get-function` / the console.
-        secret_params = {}
-        for name in ["anthropic_api_key", "openai_api_key", "paddle_api_key", "paddle_webhook_secret"]:
-            secret_params[name] = ssm.CfnParameter(
-                self, f"SsmSecret{name.replace('_', '').title()}",
-                name=f"/snag/{name}",
-                type="SecureString",
-                value="REPLACE_ME_OUT_OF_BAND",
-            )
+        # --- SSM Parameter Store (SecureString secrets) ---------------------
+        # CloudFormation cannot create SecureString parameters (AWS::SSM::Parameter
+        # only supports String/StringList), so these are NOT CDK-managed resources.
+        # Set the real values once, out-of-band, after this stack deploys:
+        #   aws ssm put-parameter --name /snag/anthropic_api_key --type SecureString --value <key>
+        #   aws ssm put-parameter --name /snag/openai_api_key --type SecureString --value <key>
+        #   aws ssm put-parameter --name /snag/paddle_api_key --type SecureString --value <key>
+        #   aws ssm put-parameter --name /snag/paddle_webhook_secret --type SecureString --value <secret>
+        # The IAM grants below reference these by ARN only, so the stack deploys
+        # fine before the parameters exist — the Lambdas just fail at runtime
+        # (ParameterNotFound) until the values above are set.
 
         # --- Lambdas -------------------------------------------------------
         snag_api = _lambda.Function(
