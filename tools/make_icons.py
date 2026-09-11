@@ -180,7 +180,7 @@ def shot_subscription():
                               "on this device. Snag generates the",
                               "answers from your subscription."]):
         d.text((x + 24, y + 74 + i * 26), line, font=font(14), fill=TEXT_DIM)
-    d.text((x + 24, y + 176), "$10 / month", font=font(30), fill=TEXT_BRIGHT)
+    d.text((x + 24, y + 176), "$5 / month", font=font(30), fill=TEXT_BRIGHT)
     d.rounded_rectangle([x + 24, y + 232, x + 260, y + 278], radius=12, fill=INDIGO)
     d.text((x + 44, y + 244), "Subscribe with Paddle", font=font(15), fill=(255, 255, 255))
     save(img.convert("RGB"), "store/screenshots/3-subscription.png")

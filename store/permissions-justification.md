@@ -33,21 +33,26 @@ Opens your browser's standard OAuth window to sign in with Amazon Cognito
 Sign-in flow: opening the Cognito Hosted UI and exchanging the
 authorization code for your session.
 
+**https://*.execute-api.ap-south-1.amazonaws.com/\***,
 **https://*.execute-api.us-east-1.amazonaws.com/\***
-Snag's own backend API: checking subscription status, generating answers,
-and generating local embeddings.
+Snag's own backend API (region depends on deployment): checking your
+sign-in and subscription status, and generating a similarity embedding
+(via Amazon Bedrock) for a saved answer's question text, so future similar
+questions can find it. Answer generation itself never goes through this
+API — see below.
 
-## Optional permissions (granted only if you enable "Local model mode" in Settings)
+## Optional permissions (requested once you pick an AI provider in Settings)
 
 **https://api.anthropic.com/\***, **https://api.openai.com/\***,
 **https://api.groq.com/\***
-Only when you opt into local model mode: call the LLM provider you choose
-directly with your own API key, instead of through Snag's subscription.
-Off by default; never requested for the subscription flow.
+Snag generates answers using your own AI provider account, directly from
+your browser — the permission for your chosen provider's domain is
+requested the first time you save a key for it in Settings. Only the
+provider you actually pick is requested, not all three.
 
 **http://127.0.0.1/\***, **http://localhost/\***
-Only when you opt into local model mode: talk to a local model server
-(e.g. Ollama or a local backend) running on your own machine.
+Requested if you choose Ollama (a local model running on your own
+machine) as your provider in Settings.
 
 ## Sensitive API usage questions
 

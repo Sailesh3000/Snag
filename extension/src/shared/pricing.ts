@@ -2,7 +2,7 @@
 //
 // Both are placeholders until the Paddle vendor account is set up at deploy
 // time (Phase 4/5). When filling them in:
-//   - PADDLE_CHECKOUT_URL points at the single $10/month subscription item
+//   - PADDLE_CHECKOUT_URL points at the single $5/month subscription item
 //     (vendor.paddle.com/checkout?items=<itemId> or the product-based URL).
 //   - PADDLE_PORTAL_URL is the customer center ("Manage subscription" link).
 //

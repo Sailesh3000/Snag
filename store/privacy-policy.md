@@ -18,6 +18,8 @@ your device). It is **never transmitted to or stored on Snag's servers**:
 - Resumes you import and their extracted text
 - Your answer history (questions, approved answers, and local embeddings
   used only to match your own past answers)
+- Your AI provider settings, including your API key — used only to call
+  your chosen provider directly from your browser
 - Your local settings
 
 Consequences: Snag has no cross-device sync, and clearing your browser's
@@ -29,12 +31,17 @@ delete it by clearing your browser data.
 - **Account (via Amazon Cognito):** your email address is used for account
   creation, sign-in, and subscription identification. Cognito is
   responsible for handling this data under its own privacy terms.
-- **Transient answer requests:** when you generate an answer, the question
-  text, your profile data, and a small set of your own past answers are sent
-  to our backend to be combined into a prompt for the AI model. This request
-  is **processed and discarded — not stored**. The same is true of embedding
-  requests, which send text snippets to generate a vector stored locally by
-  you.
+- **Answer generation (bring your own key):** generating an answer never
+  touches our backend at all. Your profile data, past answers, and the
+  question text are combined into a prompt on your own device and sent
+  directly from your browser to the AI provider you configured (Anthropic,
+  OpenAI, Groq, or a local Ollama model), using your own API key. We never
+  see this prompt or its response.
+- **Transient embedding requests:** when you save an approved answer, its
+  question text is sent to our backend to generate a similarity vector (via
+  Amazon Bedrock), which is returned to you and stored locally on your
+  device — the question text itself is **processed and discarded, not
+  stored** server-side.
 - **Billing (via Paddle):** payments are handled by Paddle, a Merchant of
   Record. Paddle receives payment and transaction details under its own
   privacy policy; Snag learns only your subscription status (active or not,

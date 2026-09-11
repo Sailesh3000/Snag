@@ -52,7 +52,7 @@ export default function PlanPanel({ subscription, onSignOut, onClose }: PlanPane
       </div>
       <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface/50 border border-white/[0.03]">
         <span className="text-[9px] text-gray-500 font-medium">Price</span>
-        <span className="text-[10px] text-gray-300 font-mono">$10/month</span>
+        <span className="text-[10px] text-gray-300 font-mono">$5/month</span>
       </div>
 
       <a

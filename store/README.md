@@ -26,7 +26,7 @@ Capture real screenshots (1280x800, 2x preferred) of:
 
 1. Field detection — sidebar on a real (anonymized) application form with detected questions
 2. Answer generation — a draft answer card with the Approve & fill button
-3. Subscription gate — the "Subscribe for $10/month" screen
+3. Subscription gate — the "Subscribe for $5/month" screen
 4. Profile & memory — the profile fields and saved past answers
 
 Strip any real personal data from the captures before uploading.
@@ -43,7 +43,9 @@ Strip any real personal data from the captures before uploading.
 - [ ] Screenshots: the 4 real captures (min 1280x800, max 10 MB each)
 - [ ] Privacy policy URL: hosted `privacy-policy.md`
 - [ ] **Monetization disclosure: YES** — paid subscription via Paddle
-      (Merchant of Record); answers require an active $10/month subscription
+      (Merchant of Record); using Snag requires an active $5/month
+      subscription (BYOK: users bring their own AI provider key/Ollama for
+      answer generation itself)
 - [ ] Permissions questions: answers in `permissions-justification.md`
 - [ ] Upload the zip from the CI `release` job artifact
       (`snag-extension-v<version>.zip`, built on a `v*` tag) — or build
