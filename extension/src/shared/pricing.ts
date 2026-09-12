@@ -10,8 +10,11 @@
 // (buildCheckoutUrl) so the Paddle webhook can link the subscription to the
 // Cognito user without a second lookup.
 
-export const PADDLE_CHECKOUT_URL = "https://REPLACE_WITH_PADDLE_CHECKOUT_URL";
-export const PADDLE_PORTAL_URL = "https://REPLACE_WITH_PADDLE_CUSTOMER_PORTAL_URL";
+export const PADDLE_CHECKOUT_URL = "https://sailesh3000.github.io/Snag/checkout/";
+// Interim stopgap: Paddle Billing doesn't give a fixed customer-portal URL
+// (it's generated per-customer via their API) — until that's wired up,
+// "Manage subscription" just opens a pre-filled email.
+export const PADDLE_PORTAL_URL = "mailto:chandrasailesh30@gmail.com?subject=Manage%20my%20Snag%20subscription";
 
 export function buildCheckoutUrl(cognitoSub: string): string {
   const sep = PADDLE_CHECKOUT_URL.includes("?") ? "&" : "?";

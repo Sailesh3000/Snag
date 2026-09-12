@@ -28,8 +28,9 @@ const DEFAULTS: Settings = {
   defaultRole: "",
 };
 
-// Must stay in sync with ui/src/lib/pricing.ts.
-const PADDLE_PORTAL_URL = "https://REPLACE_WITH_PADDLE_CUSTOMER_PORTAL_URL";
+// Interim stopgap (mailto) until a real customer portal is wired up. Must
+// stay in sync with ui/src/lib/pricing.ts and extension/src/shared/pricing.ts.
+const PADDLE_PORTAL_URL = "mailto:chandrasailesh30@gmail.com?subject=Manage%20my%20Snag%20subscription";
 
 // Must stay in sync with optional_host_permissions in manifest.json.
 // Requested per-provider on Save (not all at once) — least-privilege, and

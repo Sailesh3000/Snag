@@ -1,4 +1,5 @@
 // Plan B4: the customer-portal ("Manage subscription") link shown in the
-// PlanPanel. Placeholder until the Paddle vendor account is set up at deploy
-// time — must be kept in sync with extension/src/shared/pricing.ts.
-export const PADDLE_PORTAL_URL = "https://REPLACE_WITH_PADDLE_CUSTOMER_PORTAL_URL";
+// PlanPanel. Interim stopgap (mailto) until a real per-customer Paddle
+// portal-session URL is wired up server-side — must be kept in sync with
+// extension/src/shared/pricing.ts and extension/src/settings/index.ts.
+export const PADDLE_PORTAL_URL = "mailto:chandrasailesh30@gmail.com?subject=Manage%20my%20Snag%20subscription";

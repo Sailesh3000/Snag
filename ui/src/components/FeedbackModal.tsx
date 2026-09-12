@@ -2,12 +2,10 @@ import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // Feedback delivery: the pilot's backend used to email the team's SMTP inbox
-// server-side. The published build has no such endpoint (plan A: exactly three
-// API routes), so feedback is composed as a pre-filled email in the user's
-// own mail client. Replace the placeholder once the team feedback address is
-// decided at deploy time.
-const FEEDBACK_EMAIL = "feedback@REPLACE_WITH_YOUR_DOMAIN.com";
-const EXTENSION_VERSION = "0.3.0";
+// server-side. The published build has no such endpoint, so feedback is
+// composed as a pre-filled email in the user's own mail client.
+const FEEDBACK_EMAIL = "chandrasailesh30@gmail.com";
+const EXTENSION_VERSION = "0.4.0";
 
 interface FeedbackModalProps {
   onClose: () => void;
