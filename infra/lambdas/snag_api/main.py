@@ -11,8 +11,9 @@ and cheap enough for one subscription to fund many users' usage.
 
 Routes (the API Gateway Cognito JWT authorizer validates the access token
 before anything reaches this Lambda; verified claims arrive in
-event["requestContext"]["authorizer"]["claims"], and `sub` is the only
-per-user key the backend ever needs):
+event["requestContext"]["authorizer"]["jwt"]["claims"] — HTTP API's JWT
+authorizer nests them under "jwt", unlike a REST API/v1 custom authorizer's
+flatter shape — and `sub` is the only per-user key the backend ever needs):
 
   GET  /api/me      -> {sub, email, subscriptionStatus, currentPeriodEnd}
   POST /api/embed    -> {"embedding": [...]} (Bedrock Titan Text Embeddings v2)
@@ -169,7 +170,7 @@ def handler(event, context):
     http = event.get("requestContext", {}).get("http", {})
     method = http.get("method", "")
     path = http.get("path", "")
-    claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+    claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     sub = claims.get("sub", "")
     email = claims.get("email", "")
     body = json.loads(event.get("body") or "{}") if event.get("body") else {}

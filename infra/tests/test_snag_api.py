@@ -70,7 +70,9 @@ def _event(method, path, sub="user-1", email="a@b.c", body=None):
     return {
         "requestContext": {
             "http": {"method": method, "path": path},
-            "authorizer": {"claims": claims},
+            # HTTP API's JWT authorizer nests claims under "jwt" — not the
+            # flatter shape a REST API/v1 custom authorizer would use.
+            "authorizer": {"jwt": {"claims": claims}},
         },
         "body": json.dumps(body) if body is not None else None,
     }
