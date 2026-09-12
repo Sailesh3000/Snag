@@ -25,8 +25,10 @@ export const authConfig: AuthConfig = {
  *  extension displays email, so it must be in the token. */
 export const OAUTH_SCOPES = "openid email profile";
 
-/** Local page the Cognito redirect lands on. */
-export const CALLBACK_PATH = "oauth-callback.html";
+/** Local page the Cognito redirect lands on. No extension — must exactly
+ *  match the callback URL registered on the Cognito app client (the CDK
+ *  stack's ExtensionCallbackUrl parameter default has no `.html` either). */
+export const CALLBACK_PATH = "oauth-callback";
 
 /**
  * The redirect URI Cognito sends the browser back to.

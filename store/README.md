@@ -56,7 +56,7 @@ Strip any real personal data from the captures before uploading.
       repo): `jobacpbllhlmlidhnhoaobcdidjfknif` — the same ID in dev and in
       the store. Register it now, before submission:
       - Cognito callback URL:
-        `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback.html`
+        `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback`
       - Paddle checkout confirmation page:
         `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/checkout-done.html`
       - Deploy: `--parameters '{"ExtensionCallbackUrl": "chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback"}'`

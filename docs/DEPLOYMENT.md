@@ -91,7 +91,8 @@ npx cdk list && aws cloudformation describe-stacks --stack-name SnagStack \
 ```
 
 You need: **`ApiUrl`**, **`WebhookApiUrl`**, **`UserPoolId`**,
-**`UserPoolClientId`** (and `BillingTable` for the smoke test below).
+**`UserPoolClientId`**, **`CognitoDomain`** (and `BillingTable` for the
+smoke test below).
 
 ## Post-deploy wiring
 
@@ -106,17 +107,21 @@ up for billing yet).
 
 ### 2. Extension auth config
 
-Fill `extension/src/shared/authConfig.ts`:
+Fill `extension/src/shared/authConfig.ts` using the **`CognitoDomain`**
+stack output directly (do not construct it from `UserPoolId` — the Hosted
+UI domain is a separately-provisioned managed domain with its own prefix,
+`snag-<account-id>`, not derived from the pool ID):
 
 ```ts
 apiBaseUrl:  "<ApiUrl output>",
-cognitoDomain: "https://<UserPoolId>.auth.ap-south-1.amazoncognito.com",
+cognitoDomain: "<CognitoDomain output>",
 clientId: "<UserPoolClientId output>",
 ```
 
-Rebuild (`cd extension && npm run build`) and reload the unpacked
-extension. The Cognito client already has
-`https://devtools-window.chromiumapp.org/oauth-callback.html` as its
+Rebuild both `ui/` (`npm run build`, then copy `ui/build/*` into
+`extension/sidebar/`) and `extension/` (`npm run build`), then reload the
+unpacked extension. The Cognito client already has
+`https://devtools-window.chromiumapp.org/oauth-callback` as its
 callback (the deploy-time checklist in `infra/README.md` covers adding
 the published `chrome-extension://` callback after CWS submission).
 

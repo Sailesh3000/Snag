@@ -112,9 +112,9 @@ the infra outputs (`ApiUrl`, `WebhookApiUrl`, `UserPoolId`,
 
 1. **Cognito client callback URLs** — register BOTH on the OAuth client's
    domain allow list:
-   - `https://devtools-window.chromiumapp.org/oauth-callback.html`
+   - `https://devtools-window.chromiumapp.org/oauth-callback`
      (developer / unpacked builds)
-   - `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback.html`
+   - `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback`
      (store build — the ID is pinned by the manifest `key` field, so it is
      known before submission; private key kept outside the repo at
      `C:\Users\Sailesh\snag-extension-key.pem`)
