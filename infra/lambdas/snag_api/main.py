@@ -42,6 +42,11 @@ TABLE = dynamodb.Table(TABLE_NAME)
 # generation is BYOK) — well above realistic single-user usage.
 EMBED_CAP_PER_DAY = 500
 
+# Free-access allowlist (dev/owner accounts) — bypasses the subscription
+# gate entirely, on both /api/me (so the sidebar shows Pro status) and
+# /api/embed (so the gate itself doesn't block it). Case-insensitive.
+FREE_EMAILS = {"chandrasailesh30@gmail.com"}
+
 BEDROCK_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
 
 
@@ -56,10 +61,16 @@ def _subscription(sub):
     return _get_item(f"USER#{sub}", "SUBSCRIPTION")
 
 
-def _require_subscription(sub):
+def _is_free_account(email):
+    return bool(email) and email.lower() in FREE_EMAILS
+
+
+def _require_subscription(sub, email=""):
     """200-OK gate, or the 402 response."""
     if not sub:
         return _json(401, {"error": "unauthorized"})
+    if _is_free_account(email):
+        return None
     if _subscription(sub).get("status") != "active":
         return _json(402, {"error": "subscription_required"})
     return None
@@ -166,13 +177,15 @@ def handler(event, context):
     if method == "GET" and path == "/api/me":
         return get_me(sub, email)
     if method == "POST" and path == "/api/embed":
-        return embed(sub, body)
+        return embed(sub, email, body)
     return _json(404, {"error": "not_found", "path": path})
 
 
 def get_me(sub, email=""):
     if not sub:
         return _json(401, {"error": "unauthorized"})
+    if _is_free_account(email):
+        return _json(200, {"sub": sub, "email": email, "subscriptionStatus": "active", "currentPeriodEnd": None})
     item = _subscription(sub)
     return _json(200, {
         "sub": sub,
@@ -182,8 +195,8 @@ def get_me(sub, email=""):
     })
 
 
-def embed(sub, body):
-    denied = _require_subscription(sub)
+def embed(sub, email, body):
+    denied = _require_subscription(sub, email)
     if denied:
         return denied
 

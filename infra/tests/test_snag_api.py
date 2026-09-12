@@ -101,6 +101,15 @@ def test_get_me_with_active_subscription(main, monkeypatch):
     }
 
 
+def test_get_me_reports_active_for_a_free_allowlisted_email_with_no_real_subscription(main, monkeypatch):
+    _patch_infra(monkeypatch, main, table=_FakeTable())  # no SUBSCRIPTION item at all
+
+    resp = main.handler(_event("GET", "/api/me", email="chandrasailesh30@gmail.com"), None)
+
+    assert resp["statusCode"] == 200
+    assert _body(resp)["subscriptionStatus"] == "active"
+
+
 def test_get_me_without_subscription_item(main, monkeypatch):
     _patch_infra(monkeypatch, main, table=_FakeTable())
 
@@ -140,6 +149,17 @@ def test_embed_requires_subscription(main, monkeypatch):
     resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
 
     assert resp["statusCode"] == 402
+
+
+def test_embed_bypasses_the_gate_for_a_free_allowlisted_email(main, monkeypatch):
+    table = _FakeTable()  # no SUBSCRIPTION item — would 402 for anyone else
+    _patch_infra(monkeypatch, main, table=table)
+    monkeypatch.setattr(main, "_titan_embed", lambda text: ([0.1], None))
+
+    resp = main.handler(_event("POST", "/api/embed", email="chandrasailesh30@gmail.com", body={"text": "hello"}), None)
+
+    assert resp["statusCode"] == 200
+    assert _body(resp) == {"embedding": [0.1]}
 
 
 def test_embed_requires_text(main, monkeypatch):
