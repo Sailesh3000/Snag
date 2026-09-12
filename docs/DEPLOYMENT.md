@@ -77,11 +77,17 @@ npx cdk deploy --region ap-south-1
 table, 2 HTTP APIs, 2 ARM Lambdas). No SSM parameters are created by CDK —
 CloudFormation can't create `SecureString` parameters at all, so the
 Paddle secrets below are set directly via the AWS CLI instead.
-The `ExtensionCallbackUrl` parameter defaults to the
-`devtools-window.chromiumapp.org` callback, which is correct for
-developer/unpacked builds — no prompt needed. Pass the published
-`chrome-extension://` callback later via
-`--parameters '{"ExtensionCallbackUrl": "chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback"}'`.
+The `ExtensionCallbackUrl` parameter defaults to
+`https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`
+— correct for **both** developer/unpacked and store builds, since
+`chrome.identity.getRedirectURL()` derives this from the extension ID,
+which is pinned by the manifest `key` field to that same deterministic
+value either way. No override needed unless that key ever changes.
+
+**Gotcha 4**: changing this parameter's *default* in the CDK source does
+**not** update an already-deployed stack — CloudFormation reuses the
+previously-supplied parameter value on redeploy unless you pass it
+explicitly: `--parameters ExtensionCallbackUrl=<value>`.
 
 ### Capture the outputs
 
@@ -120,16 +126,19 @@ clientId: "<UserPoolClientId output>",
 
 Rebuild both `ui/` (`npm run build`, then copy `ui/build/*` into
 `extension/sidebar/`) and `extension/` (`npm run build`), then reload the
-unpacked extension. The Cognito client already has
-`https://devtools-window.chromiumapp.org/oauth-callback` as its
-callback (the deploy-time checklist in `infra/README.md` covers adding
-the published `chrome-extension://` callback after CWS submission).
+unpacked extension. The Cognito client already has the correct
+`https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`
+callback registered — nothing more to add after CWS submission, since the
+extension ID doesn't change between dev and the published build.
 
 ### 3. Paddle (when taking payments)
 
 1. Vendor account → create the single **$5/month** subscription item.
-2. Checkout **confirmation page** →
-   `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/checkout-done.html`
+2. Checkout confirmation → Paddle's checkout `successUrl` points at
+   `docs/checkout/success.html` (same GitHub Pages host as the checkout
+   launcher, see `docs/checkout/index.html`) — a plain "you're subscribed"
+   page. The existing ~30s alarm poll picks up the subscription flip via
+   `/api/me`; no `chrome-extension://` confirmation page needed.
 3. Add a webhook for `subscription.created` / `subscription.updated` /
    `subscription.canceled` → `WebhookApiUrl`; its HMAC secret must be the
    same value you put in `/snag/paddle_webhook_secret`:
@@ -197,3 +206,5 @@ useful gate.
 | Extension: `fetch failed` / CORS in the background console | `authConfig.apiBaseUrl` region/host mismatch the manifest's `host_permissions` — both regions are listed; make sure the URL matches one |
 | `402 subscription_required` persists after put | Wrong table, wrong `sub`, or `status` not exactly `"active"` |
 | Cognito sign-in redirect error | Callback URL not on the client's allow list (checklist item 1) |
+| Extension shows "Authorization page could not be loaded" on sign-in | The extension isn't sending the redirect_uri Chrome actually recognizes for it — must be exactly `chrome.identity.getRedirectURL(path)`'s output (`https://<extension-id>.chromiumapp.org/<path>`), registered verbatim on the Cognito client. Confirm with `curl -i "<CognitoDomain>/oauth2/authorize?client_id=<id>&response_type=code&redirect_uri=<the exact URL>&scope=openid%20email%20profile"` — a 302 to `/login` means it matches; a 302 to `/error?error=redirect_mismatch` means it doesn't (Gotcha 4 below). Also make sure you rebuilt (`npm run build`) and reloaded the unpacked extension after any `authConfig.ts`/`auth.ts` change — `tsc --noEmit` only type-checks, it doesn't regenerate the loaded `.js`. |
+| Changed `ExtensionCallbackUrl`'s default in `stack.py` but the Cognito client still shows the old URL | CloudFormation parameter persistence (Gotcha 4) — redeploy with `--parameters ExtensionCallbackUrl=<value>` explicitly; changing the template default alone doesn't touch an already-deployed stack |

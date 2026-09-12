@@ -31,14 +31,18 @@ class SnagStack(Stack):
     def __init__(self, scope, id, **kwargs):
         super().__init__(scope, id, **kwargs)
 
-        # The extension's OAuth redirect URI (the chromiumapp.org URL Chrome
-        # generates for the pinned extension key). Overridden at deploy time
-        # once the published extension ID is known.
+        # The extension's OAuth redirect URI — chrome.identity.getRedirectURL()
+        # always returns https://<extension-id>.chromiumapp.org/<path>, and
+        # manifest.json pins a "key" field, so the ID (and this URL) is the
+        # SAME deterministic value whether the extension is loaded unpacked
+        # (dev) or installed from the Chrome Web Store — one callback URL,
+        # no dev/prod split. Kept as an overridable parameter only in case
+        # the pinned key/ID ever changes.
         callback_url = CfnParameter(
             self, "ExtensionCallbackUrl",
             type="String",
-            default="https://devtools-window.chromiumapp.org/oauth-callback",
-            description="Extension OAuth redirect URI (chromiumapp.org). Set the published extension's callback URL before go-live.",
+            default="https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback",
+            description="Extension OAuth redirect URI (chromiumapp.org, derived from the pinned manifest key).",
         )
 
         # --- Cognito -------------------------------------------------------

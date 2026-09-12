@@ -483,9 +483,12 @@ export function handleRuntimeMessage(message: RuntimeMessage, sender: { tab?: { 
       })();
       return;
 
-    // Paddle's checkout redirect lands on checkout-done.html; its content
-    // script pings us here for an immediate /api/me re-poll (the 30s alarm is
-    // only the fallback — the webhook can take a few seconds to apply).
+    // Not currently wired to anything: no content script targets Paddle's
+    // checkout success page (docs/checkout/success.html, plain GitHub Pages
+    // content, not part of this extension) to send this message. The ~30s
+    // alarm poll (pushAuthUpdate on a timer, below) is what actually picks
+    // up a subscription flip after checkout — this handler is a hook for an
+    // optional instant-refresh content script, not yet built.
     case "checkout:done":
       pushAuthUpdate().catch(() => {});
       return;

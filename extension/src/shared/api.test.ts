@@ -36,7 +36,10 @@ function makeChromeStub(initial: Record<string, unknown>) {
           remove: () => Promise.resolve(),
         },
       },
-      identity: { launchWebAuthFlow: () => Promise.reject(new Error("not used in api tests")) },
+      identity: {
+        launchWebAuthFlow: () => Promise.reject(new Error("not used in api tests")),
+        getRedirectURL: (p: string) => `https://test-id.chromiumapp.org/${p}`,
+      },
     },
   };
 }

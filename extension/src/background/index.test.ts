@@ -94,8 +94,9 @@ const sessionStore = makeStore();
     // simulated redirect passes startSignIn's state check.
     launchWebAuthFlow: async () => {
       const pending = sessionStore.map.get("pendingAuth") as { state: string };
-      return `https://devtools-window.chromiumapp.org/oauth-callback.html?code=fake_code&state=${encodeURIComponent(pending.state)}`;
+      return `https://test-id.chromiumapp.org/oauth-callback?code=fake_code&state=${encodeURIComponent(pending.state)}`;
     },
+    getRedirectURL: (p: string) => `https://test-id.chromiumapp.org/${p}`,
   },
 };
 

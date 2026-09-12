@@ -110,37 +110,41 @@ The extension ships with `REPLACE_WITH_*` placeholders on the client side;
 the infra outputs (`ApiUrl`, `WebhookApiUrl`, `UserPoolId`,
 `UserPoolClientId`) feed them. After the first `cdk deploy`:
 
-1. **Cognito client callback URLs** — register BOTH on the OAuth client's
-   domain allow list:
-   - `https://devtools-window.chromiumapp.org/oauth-callback`
-     (developer / unpacked builds)
-   - `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback`
-     (store build — the ID is pinned by the manifest `key` field, so it is
-     known before submission; private key kept outside the repo at
-     `C:\Users\Sailesh\snag-extension-key.pem`)
+1. **Cognito client callback URL** — one URL covers both dev and prod:
+   `https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`.
+   `chrome.identity.getRedirectURL()` always returns
+   `https://<extension-id>.chromiumapp.org/<path>`, and the ID is pinned by
+   the manifest `key` field (private key kept outside the repo at
+   `C:\Users\Sailesh\snag-extension-key.pem`), so it's the SAME
+   deterministic ID whether loaded unpacked or installed from the Chrome
+   Web Store — no dev/prod split needed, and this is already the CDK
+   stack's `ExtensionCallbackUrl` default (deployed).
 2. **Paddle vendor account**:
-   - Create the single $5/month subscription item; copy its checkout URL
-     into `extension/src/shared/pricing.ts` (`PADDLE_CHECKOUT_URL`). The
-     extension appends `custom_data[cognitoSub]=<sub>` at runtime, which the
-     webhook uses to link the subscription to the Cognito user.
-   - Set the checkout **confirmation page URL** to
-     `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/checkout-done.html`
-     — that page pings the background for an immediate `/api/me` re-poll
-     (the 30s alarm is the fallback for webhook latency).
-   - Copy the customer-center URL into `extension/src/shared/pricing.ts`
-     (`PADDLE_PORTAL_URL`), `ui/src/lib/pricing.ts`, **and**
-     `extension/src/settings/index.ts` (keep all three in sync).
+   - Paddle Billing has no plain shareable checkout link — checkout only
+     opens via Paddle.js running on a page you control. Host
+     `docs/checkout/index.html` (already in this repo) via GitHub Pages;
+     it loads Paddle.js, reads `custom_data[cognitoSub]` from the query
+     string, and opens the Overlay checkout for your price ID. Point
+     `PADDLE_CHECKOUT_URL` in `extension/src/shared/pricing.ts` at that
+     page's URL.
+   - The checkout's `successUrl` is `docs/checkout/success.html` (same
+     host) — a plain confirmation page. The extension's existing ~30s
+     alarm poll picks up the subscription flip via `/api/me` shortly after;
+     no `chrome-extension://` confirmation page or extra manifest wiring
+     needed.
+   - `PADDLE_PORTAL_URL` ("Manage subscription") has no fixed Paddle URL
+     either — it's generated per-customer via their API. Until that's
+     wired up, point it at a `mailto:` stopgap (kept in sync across
+     `extension/src/shared/pricing.ts`, `ui/src/lib/pricing.ts`, and
+     `extension/src/settings/index.ts`).
    - Add a webhook for `subscription.created` / `updated` / `canceled`
      pointing at `WebhookApiUrl`; its HMAC secret must match
      `/snag/paddle_webhook_secret` in SSM.
 3. **Extension placeholders** — fill after deploy:
-   `extension/src/shared/authConfig.ts` (apiBaseUrl, cognitoDomain,
-   clientId), the Paddle URLs above, and
-   `ui/src/components/FeedbackModal.tsx` (`FEEDBACK_EMAIL`).
-4. **CfnParameter `ExtensionCallbackUrl`** — pass the published
-   `chrome-extension://` callback URL on (re)deploy once the store ID exists
-   (or set the `EXTENSION_CALLBACK_URL` GitHub secret so CI deploys pass it
-   automatically — see below).
+   `extension/src/shared/authConfig.ts` (apiBaseUrl, cognitoDomain from the
+   `CognitoDomain` output — not derived from `UserPoolId`, clientId), the
+   Paddle URLs above, and `ui/src/components/FeedbackModal.tsx`
+   (`FEEDBACK_EMAIL`).
 
 ## CI/CD (GitHub Actions) setup
 
@@ -214,7 +218,7 @@ and builds a zipped extension artifact on `v*` tags. One-time setup:
    | Secret | Value |
    |---|---|
    | `AWS_DEPLOY_ROLE_ARN` | the role's ARN |
-   | `EXTENSION_CALLBACK_URL` | *(optional)* the published `chrome-extension://…/oauth-callback` URL; when set, deploys pass it as the `ExtensionCallbackUrl` parameter |
+   | `EXTENSION_CALLBACK_URL` | *(optional, rarely needed)* override for the `ExtensionCallbackUrl` parameter — the deployed default (`https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`) is already correct for both dev and prod since the manifest `key` pins a deterministic extension ID; only set this if that key ever changes |
 
    Optional variable: `AWS_REGION` (defaults to `us-east-1`). The workflow
    also references the `production` GitHub environment — create it (repo →

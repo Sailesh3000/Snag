@@ -35,7 +35,10 @@ function makeChromeStub(launchWebAuthFlow: (url: string) => Promise<string>) {
           },
         },
       },
-      identity: { launchWebAuthFlow: ({ url }: { url: string }) => launchWebAuthFlow(url) },
+      identity: {
+        launchWebAuthFlow: ({ url }: { url: string }) => launchWebAuthFlow(url),
+        getRedirectURL: (p: string) => `https://test-id.chromiumapp.org/${p}`,
+      },
     },
   };
 }

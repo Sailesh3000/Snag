@@ -54,13 +54,13 @@ Strip any real personal data from the captures before uploading.
 - [ ] The extension ID is **pinned** by the manifest `key` field (private
       key kept at `C:\Users\Sailesh\snag-extension-key.pem`, outside the
       repo): `jobacpbllhlmlidhnhoaobcdidjfknif` — the same ID in dev and in
-      the store. Register it now, before submission:
-      - Cognito callback URL:
-        `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback`
-      - Paddle checkout confirmation page:
-        `chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/checkout-done.html`
-      - Deploy: `--parameters '{"ExtensionCallbackUrl": "chrome-extension://jobacpbllhlmlidhnhoaobcdidjfknif/oauth-callback"}'`
-        (or set the `EXTENSION_CALLBACK_URL` GitHub secret to that value)
+      the store, so the Cognito callback URL
+      (`https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`,
+      derived via `chrome.identity.getRedirectURL()`) is already registered
+      and deployed — nothing to do here before submission.
+      Paddle's checkout confirmation page is a plain GitHub Pages URL
+      (`docs/checkout/success.html`), not a `chrome-extension://` page, so
+      that's unaffected by the store submission either.
 - [ ] Publish to "In review" → wait for review → release
 
 ## Versioning

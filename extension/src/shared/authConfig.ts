@@ -25,26 +25,26 @@ export const authConfig: AuthConfig = {
  *  extension displays email, so it must be in the token. */
 export const OAUTH_SCOPES = "openid email profile";
 
-/** Local page the Cognito redirect lands on. No extension — must exactly
- *  match the callback URL registered on the Cognito app client (the CDK
- *  stack's ExtensionCallbackUrl parameter default has no `.html` either). */
+/** Path segment of the Cognito redirect. No extension — must exactly
+ *  match the callback URL registered on the Cognito app client. */
 export const CALLBACK_PATH = "oauth-callback";
 
 /**
  * The redirect URI Cognito sends the browser back to.
  *
- * Chrome pre-registers the `chromiumapp.org` origin for a packed
- * extension's ID, so `chrome.runtime.getURL` already returns the
- * `https://<id>.chromiumapp.org/...` URL when the extension is packed.
- * Unpacked dev builds get a `chrome-extension://` URL, which a web page
- * can't redirect to — Chrome's documented dev-mode origin is
- * devtools-window.chromiumapp.org instead.
+ * `chrome.identity.getRedirectURL(path)` is the documented, purpose-built
+ * API for this: it always returns `https://<extension-id>.chromiumapp.org/
+ * <path>`, using the extension's actual ID — Chrome only intercepts
+ * navigation to that exact pattern within launchWebAuthFlow's window, so
+ * anything else (including a hand-built URL that doesn't match the real
+ * ID) fails with "Authorization page could not be loaded" instead of
+ * completing the flow.
  *
- * BOTH values must be registered as callback URLs on the Cognito client
- * (the infra stack's ExtensionCallbackUrl parameter covers one of them).
+ * `manifest.json` pins a `"key"` field, so the extension ID is the SAME
+ * deterministic value (`jobacpbllhlmlidhnhoaobcdidjfknif`) whether loaded
+ * unpacked (dev) or from the Chrome Web Store — one callback URL covers
+ * both, no dev/prod split needed.
  */
 export function getRedirectUri(): string {
-  const url = chrome.runtime.getURL(CALLBACK_PATH);
-  if (url.startsWith("https://")) return url;
-  return `https://devtools-window.chromiumapp.org/${CALLBACK_PATH}`;
+  return chrome.identity.getRedirectURL(CALLBACK_PATH);
 }
