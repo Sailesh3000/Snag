@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
+import { authConfig } from "./authConfig.js";
 
 const FRESH_SESSION = {
   idToken: "",
@@ -79,7 +80,7 @@ describe("apiMe", () => {
     const me = await api.apiMe();
 
     expect(me.subscriptionStatus).toBe("active");
-    expect(calls[0].url).toBe("https://REPLACE_WITH_CDK_API_URL/api/me");
+    expect(calls[0].url).toBe(`${authConfig.apiBaseUrl}/api/me`);
     expect((calls[0].init!.headers as Record<string, string>).Authorization).toBe("Bearer at");
   });
 

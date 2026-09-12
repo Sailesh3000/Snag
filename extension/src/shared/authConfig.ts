@@ -16,9 +16,9 @@ export interface AuthConfig {
 }
 
 export const authConfig: AuthConfig = {
-  apiBaseUrl: "https://REPLACE_WITH_CDK_API_URL",
-  cognitoDomain: "https://REPLACE_WITH_COGNITO_DOMAIN",
-  clientId: "REPLACE_WITH_COGNITO_CLIENT_ID",
+  apiBaseUrl: "https://dt2ax5v2q0.execute-api.ap-south-1.amazonaws.com",
+  cognitoDomain: "https://snag-615105803998.auth.ap-south-1.amazoncognito.com",
+  clientId: "2cti7frj2pooci6rt181rt83fp",
 };
 
 /** Scopes requested at authorize time; the API only needs `sub`, but the

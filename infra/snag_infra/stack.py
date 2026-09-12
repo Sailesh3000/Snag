@@ -75,6 +75,16 @@ class SnagStack(Stack):
             prevent_user_existence_errors=True,
         )
 
+        # Cognito-managed Hosted UI domain — needed for
+        # chrome.identity.launchWebAuthFlow to have somewhere to redirect to.
+        # Prefix must be globally unique across all AWS accounts in this
+        # partition; embedding the account ID makes collision effectively
+        # impossible without needing a custom domain.
+        user_pool_domain = user_pool.add_domain(
+            "SnagUserPoolDomain",
+            cognito_domain=cognito.CognitoDomainOptions(domain_prefix=f"snag-{self.account}"),
+        )
+
         # --- DynamoDB (tiny, single-purpose) -------------------------------
         # Webhook idempotency items (WEBHOOK#<id>/RECEIVED) carry a `ttl` so
         # retried Paddle deliveries stay deduplicated for ~30 days and then
@@ -186,5 +196,6 @@ class SnagStack(Stack):
         CfnOutput(self, "ApiUrl", value=api.api_endpoint, description="JWT-gated HTTP API base URL (extension)")
         CfnOutput(self, "WebhookApiUrl", value=webhook_api.api_endpoint, description="Paddle webhook URL (unauthenticated, HMAC-verified)")
         CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
+        CfnOutput(self, "CognitoDomain", value=f"https://{user_pool_domain.domain_name}.auth.{self.region}.amazoncognito.com", description="Cognito Hosted UI domain")
         CfnOutput(self, "UserPoolClientId", value=app_client.user_pool_client_id)
         CfnOutput(self, "BillingTable", value=table.table_name)
