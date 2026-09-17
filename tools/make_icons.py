@@ -170,22 +170,6 @@ def shot_answer():
     save(img.convert("RGB"), "store/screenshots/2-answer-generation.png")
 
 
-def shot_subscription():
-    img, d = base_screenshot()
-    x, w = SIDEBAR_X + 20, SIDEBAR_W - 40
-    y = 180
-    sidebar_block(d, x, y, w, 330)
-    d.text((x + 24, y + 30), "Subscribe to Snag", font=font(20), fill=TEXT_BRIGHT)
-    for i, line in enumerate(["Your profile and past answers stay",
-                              "on this device. Snag generates the",
-                              "answers from your subscription."]):
-        d.text((x + 24, y + 74 + i * 26), line, font=font(14), fill=TEXT_DIM)
-    d.text((x + 24, y + 176), "$5 / month", font=font(30), fill=TEXT_BRIGHT)
-    d.rounded_rectangle([x + 24, y + 232, x + 260, y + 278], radius=12, fill=INDIGO)
-    d.text((x + 44, y + 244), "Subscribe with Paddle", font=font(15), fill=(255, 255, 255))
-    save(img.convert("RGB"), "store/screenshots/3-subscription.png")
-
-
 def shot_profile():
     img, d = base_screenshot()
     x, w = SIDEBAR_X + 20, SIDEBAR_W - 40
@@ -204,11 +188,10 @@ def shot_profile():
         d.text((x + 14, y + 12), ["Tell me about yourself", "Why this company?"][i], font=font(14), fill=TEXT_BRIGHT)
         d.text((x + 14, y + 38), "Acme - Engineer", font=font(12), fill=GREEN)
         d.text((x + 14, y + 60), "I am a software engineer with six", font=font(12), fill=TEXT_DIM)
-    save(img.convert("RGB"), "store/screenshots/4-profile-and-memory.png")
+    save(img.convert("RGB"), "store/screenshots/3-profile-and-memory.png")
 
 
 shot_fields()
 shot_answer()
-shot_subscription()
 shot_profile()
 print("done")

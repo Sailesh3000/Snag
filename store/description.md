@@ -20,11 +20,11 @@ HOW IT WORKS
 PRIVACY-BY-DESIGN
 Your profile, resumes, and answer history are stored only on your own device, in this browser. They are never uploaded to Snag's servers. Answers are generated using your own AI provider account (Anthropic, OpenAI, Groq, or a local Ollama model) directly — that text never touches Snag's servers. The only thing sent to our backend, briefly, is a saved answer's question text, used to generate a similarity embedding for future matching — it is not stored server-side.
 
-SUBSCRIPTION
-Snag is a $5/month subscription (billed by Paddle, our Merchant of Record) that unlocks using Snag and funds smarter memory matching across your saved answers. You bring your own AI provider key (or a local Ollama model) to generate answers — the subscription does not pay for AI usage. Manage or cancel any time from your Paddle customer portal. There is no free tier.
+FREE
+Snag is completely free. Sign in with email to use it — you bring your own AI provider key (or a local Ollama model) to generate answers.
 
 REQUIREMENTS
 • Chrome on desktop
-• A Snag account (sign in with email) with an active subscription
+• A Snag account (sign in with email)
 • Your own Anthropic, OpenAI, or Groq API key — or a local Ollama installation
 ```

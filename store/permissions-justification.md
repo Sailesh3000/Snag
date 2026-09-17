@@ -20,8 +20,7 @@ Answer history and imported resumes are stored locally on your device; the
 10 MB default quota would limit long-term local storage of your own data.
 
 **alarms**
-Periodically refreshes your sign-in session and re-checks subscription
-status so the sidebar stays accurate.
+Periodically refreshes your sign-in session so the sidebar stays accurate.
 
 **identity**
 Opens your browser's standard OAuth window to sign in with Amazon Cognito
@@ -35,11 +34,10 @@ authorization code for your session.
 
 **https://*.execute-api.ap-south-1.amazonaws.com/\***,
 **https://*.execute-api.us-east-1.amazonaws.com/\***
-Snag's own backend API (region depends on deployment): checking your
-sign-in and subscription status, and generating a similarity embedding
-(via Amazon Bedrock) for a saved answer's question text, so future similar
-questions can find it. Answer generation itself never goes through this
-API — see below.
+Snag's own backend API (region depends on deployment): confirming your
+sign-in, and generating a similarity embedding (via Amazon Bedrock) for a
+saved answer's question text, so future similar questions can find it.
+Answer generation itself never goes through this API — see below.
 
 ## Optional permissions (requested once you pick an AI provider in Settings)
 

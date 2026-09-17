@@ -9,7 +9,7 @@ submission checklist.
 |---|---|
 | `icon-128.png` | Store listing icon (128x128, also in `extension/icons/`) |
 | `promo-tile.png` | Promo tile (440x280) — the image in the store directory |
-| `screenshots/*.png` | 4 screenshots (1280x800). **Placeholders** — replace with real captures (see below) before submission |
+| `screenshots/*.png` | 3 screenshots (1280x800). **Placeholders** — replace with real captures (see below) before submission |
 | `description.md` | Short description (store listing) + full description (store page) |
 | `privacy-policy.md` | Privacy policy draft — host it at a public URL (e.g. a simple static site or GitHub Pages) and link it in the listing |
 | `permissions-justification.md` | Per-permission rationale for the "Permissions" disclosure questions |
@@ -26,8 +26,7 @@ Capture real screenshots (1280x800, 2x preferred) of:
 
 1. Field detection — sidebar on a real (anonymized) application form with detected questions
 2. Answer generation — a draft answer card with the Approve & fill button
-3. Subscription gate — the "Subscribe for $5/month" screen
-4. Profile & memory — the profile fields and saved past answers
+3. Profile & memory — the profile fields and saved past answers
 
 Strip any real personal data from the captures before uploading.
 
@@ -40,12 +39,10 @@ Strip any real personal data from the captures before uploading.
 - [ ] Category: Productivity
 - [ ] Icon: `icon-128.png`
 - [ ] Promo tile: `promo-tile.png`
-- [ ] Screenshots: the 4 real captures (min 1280x800, max 10 MB each)
+- [ ] Screenshots: the 3 real captures (min 1280x800, max 10 MB each)
 - [ ] Privacy policy URL: hosted `privacy-policy.md`
-- [ ] **Monetization disclosure: YES** — paid subscription via Paddle
-      (Merchant of Record); using Snag requires an active $5/month
-      subscription (BYOK: users bring their own AI provider key/Ollama for
-      answer generation itself)
+- [ ] **Monetization disclosure: NO** — Snag is free; users bring their own
+      AI provider key/Ollama for answer generation
 - [ ] Permissions questions: answers in `permissions-justification.md`
 - [ ] Upload the zip from the CI `release` job artifact
       (`snag-extension-v<version>.zip`, built on a `v*` tag) — or build
@@ -58,9 +55,6 @@ Strip any real personal data from the captures before uploading.
       (`https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`,
       derived via `chrome.identity.getRedirectURL()`) is already registered
       and deployed — nothing to do here before submission.
-      Paddle's checkout confirmation page is a plain GitHub Pages URL
-      (`docs/checkout/success.html`), not a `chrome-extension://` page, so
-      that's unaffected by the store submission either.
 - [ ] Publish to "In review" → wait for review → release
 
 ## Versioning

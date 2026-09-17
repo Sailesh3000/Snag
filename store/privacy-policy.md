@@ -29,8 +29,8 @@ delete it by clearing your browser data.
 ## Data sent to our servers
 
 - **Account (via Amazon Cognito):** your email address is used for account
-  creation, sign-in, and subscription identification. Cognito is
-  responsible for handling this data under its own privacy terms.
+  creation and sign-in. Cognito is responsible for handling this data under
+  its own privacy terms.
 - **Answer generation (bring your own key):** generating an answer never
   touches our backend at all. Your profile data, past answers, and the
   question text are combined into a prompt on your own device and sent
@@ -42,23 +42,19 @@ delete it by clearing your browser data.
   Amazon Bedrock), which is returned to you and stored locally on your
   device — the question text itself is **processed and discarded, not
   stored** server-side.
-- **Billing (via Paddle):** payments are handled by Paddle, a Merchant of
-  Record. Paddle receives payment and transaction details under its own
-  privacy policy; Snag learns only your subscription status (active or not,
-  period end date) via Paddle webhooks.
 
 ## What we do not collect
 
 No analytics, no advertising, no third-party trackers, no telemetry, no
 server-side storage of your profile, resumes, answers, or generated answer
-text.
+text. Snag is free — we do not collect payment information at all.
 
 ## Retention and deletion
 
-Server-side we retain only: your account record (Cognito), subscription
-status, and usage counters (DynamoDB). Deleting your account via
-[contact email] removes these records. All device-local data is under your
-control via your browser's data controls.
+Server-side we retain only: your account record (Cognito) and small usage
+counters (DynamoDB, used only to prevent abuse of the embedding feature).
+Deleting your account via [contact email] removes these records. All
+device-local data is under your control via your browser's data controls.
 
 ## Contact
 
