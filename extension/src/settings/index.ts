@@ -1,8 +1,7 @@
 // Snag settings page (extension page, direct chrome.runtime access).
-// Sections: account/plan, local-data notice, AI provider (BYOK — the only
-// way answers are generated; the subscription gates using Snag at all and
-// funds Bedrock-backed memory matching, not generation), profile defaults,
-// debugging.
+// Sections: account, local-data notice, AI provider (BYOK — the only way
+// answers are generated), profile defaults, debugging. Free product, no
+// billing/plan concept.
 
 interface Settings {
   provider: string;
@@ -27,10 +26,6 @@ const DEFAULTS: Settings = {
   defaultCompany: "",
   defaultRole: "",
 };
-
-// Interim stopgap (mailto) until a real customer portal is wired up. Must
-// stay in sync with ui/src/lib/pricing.ts and extension/src/shared/pricing.ts.
-const PADDLE_PORTAL_URL = "mailto:chandrasailesh30@gmail.com?subject=Manage%20my%20Snag%20subscription";
 
 // Must stay in sync with optional_host_permissions in manifest.json.
 // Requested per-provider on Save (not all at once) — least-privilege, and
@@ -83,46 +78,28 @@ function showStatus(msg: string, type: "success" | "error") {
 
 // ---------------------------------------------------------------------------
 // Account section — background is the only place that talks to /api/me;
-// this page just renders the reduced session + subscription view.
+// this page just renders the reduced session view.
 // ---------------------------------------------------------------------------
 
 interface AccountView {
   session?: { sub: string; email: string } | null;
-  subscription?: { status: string; currentPeriodEnd: string | null } | null;
 }
 
 function renderAccount(view: AccountView) {
   const email = div("accountEmail");
   const detail = div("accountDetail");
-  const pill = div("planPill");
   const signInBtn = div("signInBtn");
-  const manageBtn = div("manageBtn");
   const signOutBtn = div("signOutBtn");
 
   if (view.session) {
     email.textContent = view.session.email;
-    if (view.subscription?.status === "active") {
-      const until = view.subscription.currentPeriodEnd
-        ? ` · until ${new Date(view.subscription.currentPeriodEnd).toLocaleDateString()}`
-        : "";
-      detail.textContent = `Subscription active${until}`;
-      pill.textContent = "Pro";
-      pill.className = "pill active";
-    } else {
-      detail.textContent = "No active subscription — subscribe from the sidebar to use Snag.";
-      pill.textContent = "No plan";
-      pill.className = "pill inactive";
-    }
+    detail.textContent = "Signed in";
     signInBtn.style.display = "none";
-    manageBtn.style.display = "";
     signOutBtn.style.display = "";
   } else {
     email.textContent = "Not signed in";
-    detail.textContent = "Sign in to use your Snag subscription.";
-    pill.textContent = "No plan";
-    pill.className = "pill none";
+    detail.textContent = "Sign in to use Snag.";
     signInBtn.style.display = "";
-    manageBtn.style.display = "none";
     signOutBtn.style.display = "none";
   }
 }
@@ -242,9 +219,6 @@ div("signInBtn").addEventListener("click", () => {
 });
 div("signOutBtn").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "auth:signOut" }).catch(() => {});
-});
-div("manageBtn").addEventListener("click", () => {
-  chrome.tabs.create({ url: PADDLE_PORTAL_URL });
 });
 
 loadSettings();

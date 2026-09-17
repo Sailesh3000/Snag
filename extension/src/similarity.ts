@@ -1,7 +1,7 @@
 // Client-side semantic similarity search over the user's own stored answer
 // embeddings. Pure computation — no network, no IndexedDB — so it's trivially
 // testable. Embedding *vectors* are produced elsewhere (the backend /api/embed
-// endpoint, subscription-gated) and stored locally alongside each answer.
+// endpoint, gated only on being signed in) and stored locally alongside each answer.
 //
 // Ranking ported from backend/memory/memory_service.py::find_similar:
 // cosine similarity with a small same-company / same-role boost so a

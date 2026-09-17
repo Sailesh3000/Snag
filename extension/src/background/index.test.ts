@@ -105,7 +105,6 @@ const sessionStore = makeStore();
 // ---------------------------------------------------------------------------
 
 const api = {
-  meStatus: "active",
   embed: [0.5, 0.5, 0.707] as number[],
   embedStatus: 200 as 200 | 429,
   embedCalls: 0,
@@ -131,12 +130,7 @@ function jsonResp(body: unknown, status = 200): Response {
     }));
   }
   if (u.includes("/api/me")) {
-    return Promise.resolve(jsonResp({
-      sub: "sub1",
-      email: "a@b.com",
-      subscriptionStatus: api.meStatus,
-      currentPeriodEnd: "2026-10-01T00:00:00Z",
-    }));
+    return Promise.resolve(jsonResp({ sub: "sub1", email: "a@b.com" }));
   }
   if (u.includes("/api/embed")) {
     api.embedCalls++;
@@ -208,7 +202,6 @@ const lastOf = (type: string) => [...sentToTab()].reverse().find((m) => m.type =
 beforeEach(async () => {
   tabMessages.length = 0;
   createdTabs.length = 0;
-  api.meStatus = "active";
   api.embed = [0.5, 0.5, 0.707];
   api.embedStatus = 200;
   api.embedCalls = 0;
@@ -321,16 +314,6 @@ describe("answer:generate", () => {
     expect(lastOf("answer:draft")!.payload.memoryCount).toBe(1);
   });
 
-  it("maps an inactive subscription to errorCode=subscription_required (license gate, before any LLM call)", async () => {
-    await seedSession();
-    api.meStatus = "none";
-    dispatch({ type: "answer:generate", payload: { fieldId: "q1", question: "Tell me about yourself" } });
-    await waitFor(() => !!lastOf("answer:draft"), "answer:draft");
-    expect(lastOf("answer:draft")!.payload).toMatchObject({ errorCode: "subscription_required" });
-    expect(lastOf("answer:draft")!.payload.error).toMatch(/subscription/i);
-    expect(llmState.calls).toHaveLength(0); // never reached the BYOK call
-  });
-
   it("maps a 429 from the (still backend-gated) embed call to errorCode=rate_limited", async () => {
     await seedSession();
     await saveAnswer({
@@ -421,29 +404,20 @@ describe("fills", () => {
 });
 
 describe("auth messages", () => {
-  it("auth:status returns the public session plus live subscription status", async () => {
+  it("auth:status returns the public session", async () => {
     await seedSession();
     dispatch({ type: "auth:status" });
     await waitFor(() => !!lastOf("auth:status"), "auth:status");
     expect(lastOf("auth:status")!.payload).toMatchObject({
       session: { sub: "sub1", email: "a@b.com" },
-      subscription: { status: "active", currentPeriodEnd: "2026-10-01T00:00:00Z" },
     });
   });
 
-  it("auth:checkout opens the Paddle checkout with the Cognito sub in custom_data", async () => {
-    await seedSession();
-    dispatch({ type: "auth:checkout" });
-    await waitFor(() => createdTabs.length === 1, "checkout tab");
-    expect(createdTabs[0].url).toContain("custom_data[cognitoSub]=sub1");
-  });
-
-  it("auth:signIn exchanges the code and pushes auth:updated with subscription", async () => {
+  it("auth:signIn exchanges the code and pushes auth:updated", async () => {
     dispatch({ type: "auth:signIn" });
     await waitFor(() => !!lastOf("auth:updated"), "auth:updated");
     expect(lastOf("auth:updated")!.payload).toMatchObject({
       session: { sub: "sub2", email: "new@user.dev" },
-      subscription: { status: "active" },
     });
     // The new session was persisted.
     const stored = localStore.map.get("session") as { sub: string };
@@ -455,7 +429,6 @@ describe("auth messages", () => {
     dispatch({ type: "auth:signOut" });
     await waitFor(() => !!lastOf("auth:updated"), "auth:updated");
     expect(lastOf("auth:updated")!.payload.session).toBeNull();
-    expect(lastOf("auth:updated")!.payload.subscription).toBeNull();
     expect(localStore.map.has("session")).toBe(false);
   });
 });

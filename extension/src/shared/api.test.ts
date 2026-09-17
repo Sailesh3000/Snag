@@ -74,15 +74,11 @@ beforeEach(async () => {
 
 describe("apiMe", () => {
   it("GETs /api/me with the access token and returns the body", async () => {
-    responder = () =>
-      new Response(
-        JSON.stringify({ sub: "user-1", email: "a@b.c", subscriptionStatus: "active", currentPeriodEnd: null }),
-        { status: 200 },
-      );
+    responder = () => new Response(JSON.stringify({ sub: "user-1", email: "a@b.c" }), { status: 200 });
 
     const me = await api.apiMe();
 
-    expect(me.subscriptionStatus).toBe("active");
+    expect(me).toEqual({ sub: "user-1", email: "a@b.c" });
     expect(calls[0].url).toBe(`${authConfig.apiBaseUrl}/api/me`);
     expect((calls[0].init!.headers as Record<string, string>).Authorization).toBe("Bearer at");
   });
@@ -109,12 +105,12 @@ describe("apiMe", () => {
       }
       meHits++;
       if (meHits === 1) return new Response("{}", { status: 401 });
-      return new Response(JSON.stringify({ sub: "user-1", email: "a@b.c", subscriptionStatus: "none", currentPeriodEnd: null }), { status: 200 });
+      return new Response(JSON.stringify({ sub: "user-1", email: "a@b.c" }), { status: 200 });
     };
 
     const me = await api.apiMe();
 
-    expect(me.subscriptionStatus).toBe("none");
+    expect(me).toEqual({ sub: "user-1", email: "a@b.c" });
     expect(calls.filter((c) => c.url.endsWith("/api/me"))).toHaveLength(2);
     // The retry used the refreshed token.
     expect((calls[2].init!.headers as Record<string, string>).Authorization).toBe("Bearer at2");
@@ -132,11 +128,6 @@ describe("apiMe", () => {
     await expect(api.apiMe()).rejects.toThrow("sign in again");
     const { getSession } = await import("./auth.js");
     await expect(getSession()).resolves.toBeNull();
-  });
-
-  it("maps 402 to SubscriptionRequiredError", async () => {
-    responder = () => new Response("{}", { status: 402 });
-    await expect(api.apiMe()).rejects.toBeInstanceOf(api.SubscriptionRequiredError);
   });
 
   it("maps 429 to RateLimitedError", async () => {

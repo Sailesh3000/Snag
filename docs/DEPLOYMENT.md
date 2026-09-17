@@ -74,9 +74,8 @@ npx cdk deploy --region ap-south-1
 ```
 
 `cdk deploy` creates the whole stack (Cognito pool + client, DynamoDB
-table, 2 HTTP APIs, 2 ARM Lambdas). No SSM parameters are created by CDK —
-CloudFormation can't create `SecureString` parameters at all, so the
-Paddle secrets below are set directly via the AWS CLI instead.
+table, 1 HTTP API, 1 ARM Lambda). No secrets or SSM parameters at all —
+Bedrock is IAM-only and generation is BYOK.
 The `ExtensionCallbackUrl` parameter defaults to
 `https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`
 — correct for **both** developer/unpacked and store builds, since
@@ -96,9 +95,9 @@ npx cdk list && aws cloudformation describe-stacks --stack-name SnagStack \
   --region ap-south-1 --query 'Stacks[0].Outputs'
 ```
 
-You need: **`ApiUrl`**, **`WebhookApiUrl`**, **`UserPoolId`**,
-**`UserPoolClientId`**, **`CognitoDomain`** (and `BillingTable` for the
-smoke test below).
+You need: **`ApiUrl`**, **`UserPoolId`**, **`UserPoolClientId`**,
+**`CognitoDomain`** (and `BillingTable` if you want to inspect usage
+counters directly).
 
 ## Post-deploy wiring
 
@@ -106,10 +105,8 @@ smoke test below).
 
 Answer generation is BYOK (the extension calls Anthropic/OpenAI/Groq/Ollama
 directly with the user's own key — nothing to configure here), and
-embeddings use Bedrock, which is IAM-only (no key/secret). The only secrets
-this stack needs are Paddle's, added in the Paddle step below — the stack
-deploys and `/api/embed` works fine before that (Paddle just isn't wired
-up for billing yet).
+embeddings use Bedrock, which is IAM-only (no key/secret). This backend has
+no secrets to configure at all.
 
 ### 2. Extension auth config
 
@@ -131,49 +128,22 @@ unpacked extension. The Cognito client already has the correct
 callback registered — nothing more to add after CWS submission, since the
 extension ID doesn't change between dev and the published build.
 
-### 3. Paddle (when taking payments)
+### 3. Feedback contact
 
-1. Vendor account → create the single **$5/month** subscription item.
-2. Checkout confirmation → Paddle's checkout `successUrl` points at
-   `docs/checkout/success.html` (same GitHub Pages host as the checkout
-   launcher, see `docs/checkout/index.html`) — a plain "you're subscribed"
-   page. The existing ~30s alarm poll picks up the subscription flip via
-   `/api/me`; no `chrome-extension://` confirmation page needed.
-3. Add a webhook for `subscription.created` / `subscription.updated` /
-   `subscription.canceled` → `WebhookApiUrl`; its HMAC secret must be the
-   same value you put in `/snag/paddle_webhook_secret`:
+Fill `FEEDBACK_EMAIL` in `ui/src/components/FeedbackModal.tsx`.
 
-   ```bash
-   aws ssm put-parameter --region ap-south-1 --name /snag/paddle_api_key         --type SecureString --value "<key>"
-   aws ssm put-parameter --region ap-south-1 --name /snag/paddle_webhook_secret  --type SecureString --value "<secret>"
-   ```
-
-4. Copy the checkout URL into `extension/src/shared/pricing.ts`
-   (`PADDLE_CHECKOUT_URL`) and the customer-center URL into all three
-   `PADDLE_PORTAL_URL` copies (`extension/src/shared/pricing.ts`,
-   `ui/src/lib/pricing.ts`, `extension/src/settings/index.ts`).
-5. Fill `FEEDBACK_EMAIL` in `ui/src/components/FeedbackModal.tsx`.
-
-## Smoke test (no real payment needed)
+## Smoke test
 
 1. Load the unpacked extension (`chrome://extensions` → Developer mode →
    Load unpacked → `extension/`), open any application form, sign in from
    the sidebar (Cognito Hosted UI, self-sign-up).
-2. Get your Cognito `sub` (sidebar → DevTools, or the Cognito console).
-3. Plant an active subscription:
-
-   ```bash
-   aws dynamodb put-item --region ap-south-1 --table-name "<BillingTable>" \
-     --item '{"pk":{"S":"USER#<sub>"}, "sk":{"S":"SUBSCRIPTION"}, "status":{"S":"active"}, "currentPeriodEnd":{"S":"2026-12-31T00:00:00Z"}}'
-   ```
-
-4. Approve a drafted answer (this is what triggers the license-gated
-   `/api/embed` call). Expected: the sidebar shows the subscribe wall / a
-   "subscription required" error before the put, and the answer saves with
-   a real embedding after. Delete the item to re-test the gate. Note:
-   answer *generation* itself is BYOK and works regardless of subscription
-   status (nothing to test against this backend there) — only `/api/embed`
-   is backend-gated.
+2. In Settings, pick an AI provider (or use Ollama locally, no key needed)
+   and add your key.
+3. Generate an answer for a detected question. Expected: it streams and
+   completes — this is BYOK, so it never touches the backend at all.
+4. Approve the answer (this triggers the signed-in-gated `/api/embed`
+   call). Expected: it saves with a real embedding vector. Sign out and
+   retry to confirm `/api/embed` correctly 401s when signed out.
 
 ## Re-deploys
 
@@ -184,7 +154,7 @@ npx cdk deploy --region ap-south-1
 
 Safe to run repeatedly after stack changes; CDK diffs the template.
 To remove everything: `npx cdk destroy --region ap-south-1` (destroys
-the Cognito pool, table, APIs, and Lambdas — SSM parameters remain).
+the Cognito pool, table, API, and Lambda).
 
 ## CI/CD deploys (after the one-time OIDC setup)
 
@@ -204,7 +174,6 @@ useful gate.
 | `AccessDeniedException: ...account is currently being verified` on `bedrock-runtime invoke-model` | Bedrock's separate verification hold (Gotcha 3) |
 | `cdk deploy` prompts for `ExtensionCallbackUrl` | Pass `--parameters '{"ExtensionCallbackUrl": "..."}'` |
 | Extension: `fetch failed` / CORS in the background console | `authConfig.apiBaseUrl` region/host mismatch the manifest's `host_permissions` — both regions are listed; make sure the URL matches one |
-| `402 subscription_required` persists after put | Wrong table, wrong `sub`, or `status` not exactly `"active"` |
 | Cognito sign-in redirect error | Callback URL not on the client's allow list (checklist item 1) |
 | Extension shows "Authorization page could not be loaded" on sign-in | The extension isn't sending the redirect_uri Chrome actually recognizes for it — must be exactly `chrome.identity.getRedirectURL(path)`'s output (`https://<extension-id>.chromiumapp.org/<path>`), registered verbatim on the Cognito client. Confirm with `curl -i "<CognitoDomain>/oauth2/authorize?client_id=<id>&response_type=code&redirect_uri=<the exact URL>&scope=openid%20email%20profile"` — a 302 to `/login` means it matches; a 302 to `/error?error=redirect_mismatch` means it doesn't (Gotcha 4 below). Also make sure you rebuilt (`npm run build`) and reloaded the unpacked extension after any `authConfig.ts`/`auth.ts` change — `tsc --noEmit` only type-checks, it doesn't regenerate the loaded `.js`. |
 | Changed `ExtensionCallbackUrl`'s default in `stack.py` but the Cognito client still shows the old URL | CloudFormation parameter persistence (Gotcha 4) — redeploy with `--parameters ExtensionCallbackUrl=<value>` explicitly; changing the template default alone doesn't touch an already-deployed stack |

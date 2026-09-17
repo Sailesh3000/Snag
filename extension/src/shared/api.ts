@@ -1,24 +1,21 @@
 /**
  * The extension's ONLY backend client. Every network call to Snag's
- * server goes through here — the revised plan confines the surface to
- * exactly two endpoints (LLM generation is BYOK, never touches the
- * backend — see llm/client.ts):
+ * server goes through here — the surface is exactly two endpoints (LLM
+ * generation is BYOK, never touches the backend — see llm/client.ts):
  *
- *   GET  /api/me      license check: session + subscription status
- *   POST /api/embed   Bedrock Titan embedding, still subscription-gated
+ *   GET  /api/me      identity check: confirms the token is valid
+ *   POST /api/embed   Bedrock Titan embedding, gated on being signed in
+ *                     plus a daily abuse ceiling (cost protection only —
+ *                     the product is free, there's no paid tier)
  *
  * Auth: Bearer access token with proactive refresh (<60s remaining), a
- * single retry after a 401, then "sign in again". 402 and 429 are mapped
- * to distinct error types so the UI can show "subscribe" vs "rate
- * limited" (plan B4).
+ * single retry after a 401, then "sign in again".
  */
 import { authConfig } from "./authConfig.js";
 import { clearSession, getSession, isFresh, refreshSession } from "./auth.js";
 
 export class AuthError extends Error {}
-/** 402 — no active subscription. */
-export class SubscriptionRequiredError extends AuthError {}
-/** 429 — server-side abuse ceiling for the month. */
+/** 429 — daily abuse ceiling on /api/embed (Bedrock cost protection). */
 export class RateLimitedError extends AuthError {}
 /** Any other non-2xx API response. */
 export class ApiError extends AuthError {
@@ -50,8 +47,7 @@ async function fetchWithAuth(path: string, init: RequestInit, retried = false): 
     await clearSession();
     throw new AuthError("session expired — sign in again");
   }
-  if (resp.status === 402) throw new SubscriptionRequiredError("subscription required");
-  if (resp.status === 429) throw new RateLimitedError("monthly usage limit reached");
+  if (resp.status === 429) throw new RateLimitedError("daily usage limit reached");
   if (!resp.ok) throw new ApiError(`API error ${resp.status}`, resp.status);
   return resp;
 }
@@ -59,8 +55,6 @@ async function fetchWithAuth(path: string, init: RequestInit, retried = false): 
 export interface Me {
   sub: string;
   email: string;
-  subscriptionStatus: string;
-  currentPeriodEnd: string | null;
 }
 
 export async function apiMe(): Promise<Me> {

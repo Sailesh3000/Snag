@@ -1,7 +1,7 @@
 // Local-first data layer. All durable user data (profile, resumes, answer
 // memory) lives in the extension's IndexedDB and never leaves the machine —
-// this restores the pilot's "nothing leaves your machine" promise. Only
-// subscription status and usage counters are authoritative server-side.
+// this restores the pilot's "nothing leaves your machine" promise. Only a
+// usage counter (Bedrock embed abuse ceiling) is authoritative server-side.
 //
 // Ported from the backend's SQLite schema (backend/memory/sqlite_store.py):
 //   profile (key/value/verified)  -> single "profile" record

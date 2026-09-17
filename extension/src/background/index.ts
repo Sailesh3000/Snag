@@ -1,4 +1,4 @@
-// Snag background service worker — local orchestration (plan B3, revised).
+// Snag background service worker — local orchestration.
 //
 // The retired local FastAPI backend used to do four things for the
 // extension: (1) classify detected form fields and match them against the
@@ -7,25 +7,23 @@
 // approved answer into the DOM, and (4) persist approved answers into
 // memory. All of that now runs here against the local IndexedDB.
 //
-// LLM generation is BYOK (revised plan): the subscription funds Bedrock
-// embeddings and gates using Snag at all, but the user's own Anthropic/
-// OpenAI/Groq/Ollama key (llm/client.ts, configured in Settings) is what
-// actually generates answers — the backend never sees the prompt or holds
-// a provider key. The two network calls left are /api/me (license check)
-// and /api/embed (Bedrock Titan, still subscription-gated).
+// Free product, no billing: LLM generation is BYOK — the user's own
+// Anthropic/OpenAI/Groq/Ollama key (llm/client.ts, configured in Settings)
+// generates answers, and the backend never sees the prompt or holds a
+// provider key. The two network calls left are /api/me (identity check)
+// and /api/embed (Bedrock Titan, gated only on being signed in plus a
+// daily abuse ceiling).
 //
 // Message flow (unchanged from the pilot, new transport):
 //   sidebar iframe --postMessage--> content script --runtime--> background
 //   background     --tabs.sendMessage--> content script --forwardToSidebar--> sidebar
 //
-// The sidebar never sees tokens; it gets `publicSession` (sub/email only)
-// plus subscription status from /api/me.
+// The sidebar never sees tokens; it gets `publicSession` (sub/email only).
 
-import { apiEmbed, apiMe, ApiError, AuthError, RateLimitedError, SubscriptionRequiredError } from "../shared/api.js";
+import { apiEmbed, apiMe, ApiError, AuthError, RateLimitedError } from "../shared/api.js";
 import { getSession, isFresh, refreshSession, signOut, startSignIn, type Session } from "../shared/auth.js";
 import { classifyFields, matchStaticFields, type FieldInfo } from "../classify.js";
 import { ANSWER_SYSTEM, buildAnswerPrompt, detectQuestionType, type MemoryEntry } from "../shared/prompt.js";
-import { buildCheckoutUrl } from "../shared/pricing.js";
 import { findSimilar } from "../similarity.js";
 import { deleteAnswer, getAnswers, getProfile, saveAnswer, setProfileField, updateAnswer } from "../storage/db.js";
 import { getSettings } from "../shared/config.js";
@@ -52,11 +50,6 @@ interface PendingApproval {
   original?: string;
 }
 
-interface SubscriptionInfo {
-  status: string;
-  currentPeriodEnd: string | null;
-}
-
 const activeTabs = new Set<number>();
 const pageContexts = new Map<number, PageContext>();
 // fill:approve -> data needed to persist the answer once the content script
@@ -73,33 +66,20 @@ function publicSession(session: Session | null) {
   return session ? { sub: session.sub, email: session.email, expiresAt: session.expiresAt } : null;
 }
 
-// --- subscription status ----------------------------------------------------
-
-async function fetchSubscription(): Promise<SubscriptionInfo | null> {
-  try {
-    const me = await apiMe();
-    return { status: me.subscriptionStatus, currentPeriodEnd: me.currentPeriodEnd ?? null };
-  } catch {
-    return null;
-  }
-}
-
 async function pushAuthUpdate(tabId?: number, error?: string): Promise<void> {
   const session = await getSession();
-  const subscription = session ? await fetchSubscription() : null;
-  const payload: Record<string, unknown> = { session: publicSession(session), subscription };
+  const payload: Record<string, unknown> = { session: publicSession(session) };
   if (error) payload.error = error;
   const message: RuntimeMessage = { type: "auth:updated", payload };
   if (tabId !== undefined) sendToTab(tabId, message);
   else for (const t of activeTabs) sendToTab(t, message);
 }
 
-// --- error mapping (plan B4: distinct 402 / 429 / auth UI states) -----------
+// --- error mapping (distinct auth / rate-limit / no-key UI states) ---------
 
-type AnswerErrorCode = "auth" | "subscription_required" | "rate_limited" | "no_api_key" | "error";
+type AnswerErrorCode = "auth" | "rate_limited" | "no_api_key" | "error";
 
 function errorCodeFor(e: unknown): AnswerErrorCode {
-  if (e instanceof SubscriptionRequiredError) return "subscription_required";
   if (e instanceof RateLimitedError) return "rate_limited";
   if (e instanceof ApiError) return "error";
   if (e instanceof AuthError) return "auth";
@@ -107,21 +87,11 @@ function errorCodeFor(e: unknown): AnswerErrorCode {
 }
 
 const ERROR_MESSAGES: Record<AnswerErrorCode, string> = {
-  subscription_required: "Your subscription isn't active. Subscribe to generate answers.",
   rate_limited: "You've hit today's usage limit. Try again tomorrow.",
   no_api_key: "Add your AI provider's API key in Settings to generate answers.",
   auth: "You're signed out or your session expired. Sign in again to continue.",
   error: "Couldn't generate an answer. Check your connection and try again.",
 };
-
-/** License gate (revised plan): using Snag at all requires an active
- * subscription, independent of which LLM path generates the text — so this
- * is checked explicitly rather than piggybacked on the /api/embed call
- * (which is skipped entirely when there's no memory yet to search). */
-async function hasActiveSubscription(): Promise<boolean> {
-  const sub = await fetchSubscription();
-  return sub?.status === "active";
-}
 
 // --- page scan ---------------------------------------------------------------
 
@@ -190,13 +160,6 @@ async function handleAnswerGenerate(tabId: number, payload: Record<string, unkno
   const session = await getSession();
   if (!session) {
     sendErrorDraft(tabId, { ...base, questionType: fallbackType }, "auth");
-    return;
-  }
-
-  // License gate first, before spending anything (an embed call, an LLM
-  // call) — using Snag at all requires an active subscription.
-  if (!(await hasActiveSubscription())) {
-    sendErrorDraft(tabId, { ...base, questionType: fallbackType }, "subscription_required");
     return;
   }
 
@@ -270,9 +233,9 @@ async function handleAnswerGenerate(tabId: number, payload: Record<string, unkno
 // --- fills -------------------------------------------------------------------
 
 async function persistApprovedAnswer(pending: PendingApproval): Promise<void> {
-  // The embedding is best-effort: if the subscription lapses or the embed
-  // quota is hit, the answer is still saved — just without a vector for
-  // future semantic matching.
+  // The embedding is best-effort: if the daily embed quota is hit, the
+  // answer is still saved — just without a vector for future semantic
+  // matching.
   let embedding: number[] | null = null;
   try {
     embedding = await apiEmbed(pending.question);
@@ -453,18 +416,7 @@ export function handleRuntimeMessage(message: RuntimeMessage, sender: { tab?: { 
     case "auth:status":
       void (async () => {
         const session = await getSession();
-        const subscription = session ? await fetchSubscription() : null;
-        sendToTab(tabId, { type: "auth:status", payload: { session: publicSession(session), subscription } });
-      })();
-      return;
-
-    case "auth:checkout":
-      void (async () => {
-        const session = await getSession();
-        if (!session?.sub) return;
-        try {
-          await chrome.tabs.create({ url: buildCheckoutUrl(session.sub) });
-        } catch {}
+        sendToTab(tabId, { type: "auth:status", payload: { session: publicSession(session) } });
       })();
       return;
 
@@ -483,16 +435,6 @@ export function handleRuntimeMessage(message: RuntimeMessage, sender: { tab?: { 
       })();
       return;
 
-    // Not currently wired to anything: no content script targets Paddle's
-    // checkout success page (docs/checkout/success.html, plain GitHub Pages
-    // content, not part of this extension) to send this message. The ~30s
-    // alarm poll (pushAuthUpdate on a timer, below) is what actually picks
-    // up a subscription flip after checkout — this handler is a hook for an
-    // optional instant-refresh content script, not yet built.
-    case "checkout:done":
-      pushAuthUpdate().catch(() => {});
-      return;
-
     default:
       // Unknown sidebar messages: keep the pilot's pass-through so the
       // content script relay stays lossless.
@@ -502,9 +444,9 @@ export function handleRuntimeMessage(message: RuntimeMessage, sender: { tab?: { 
 
 // --- lifecycle ---------------------------------------------------------------
 
-// Token refresh on the alarm cadence (plan B2): the access token dies in an
-// hour, so refresh proactively while the browser is open, then re-poll
-// /api/me so a Paddle webhook that just landed shows up without a reload.
+// Token refresh on the alarm cadence: the access token dies in an hour, so
+// refresh proactively while the browser is open, then re-push the session
+// so the sidebar always reflects the latest sign-in state.
 chrome.alarms.create("snag-session-refresh", { periodInMinutes: 0.5 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
