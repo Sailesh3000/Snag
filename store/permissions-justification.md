@@ -52,6 +52,15 @@ provider you actually pick is requested, not all three.
 Requested if you choose Ollama (a local model running on your own
 machine) as your provider in Settings.
 
+**https://\*/\*** (declared broadly, granted narrowly)
+Only relevant if you choose "OpenAI-Compatible API" and type in your own
+base URL (e.g. LM Studio, Together AI, Fireworks) — there's no fixed
+domain to list in advance for that option. This broad pattern is declared
+so Chrome will allow requesting *some* HTTPS origin at runtime, but Snag
+only ever actually requests the one specific domain you typed in
+Settings — never all of `https://*/*` at once, and never for the
+first-party providers above (which use their own fixed, narrow entries).
+
 ## Sensitive API usage questions
 
 - We do not use `webRequest`, `declarativeNetRequest`, or

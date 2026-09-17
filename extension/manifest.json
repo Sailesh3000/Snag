@@ -15,7 +15,8 @@
     "https://api.openai.com/*",
     "https://api.groq.com/*",
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background/index.js",

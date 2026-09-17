@@ -144,8 +144,31 @@ function updateProviderUI() {
 /** Least-privilege: request only the picked provider's origin (Ollama's
  * localhost origin, or a cloud provider's origin once a key is entered) —
  * not all optional origins at once. */
-async function requestProviderPermissionIfNeeded(provider: string, apiKey: string): Promise<void> {
-  const origins = provider === "ollama" ? ["http://127.0.0.1/*", "http://localhost/*"] : PROVIDER_ORIGINS[provider] && apiKey ? [PROVIDER_ORIGINS[provider]] : [];
+/** "openai-compatible" has no fixed domain — the user types their own
+ *  base URL (LM Studio, Together AI, Fireworks, ...). manifest.json
+ *  declares a broad `https://*\/*` optional permission specifically so
+ *  THIS function can request just that one specific origin at runtime —
+ *  Chrome only grants the exact pattern requested, never the full
+ *  wildcard, so this stays scoped to whatever domain the user actually
+ *  configured. */
+function originFor(baseUrl: string): string | null {
+  try {
+    return `${new URL(baseUrl).origin}/*`;
+  } catch {
+    return null;
+  }
+}
+
+async function requestProviderPermissionIfNeeded(provider: string, apiKey: string, baseUrl: string): Promise<void> {
+  let origins: string[];
+  if (provider === "ollama") {
+    origins = ["http://127.0.0.1/*", "http://localhost/*"];
+  } else if (provider === "openai-compatible") {
+    const origin = apiKey ? originFor(baseUrl) : null;
+    origins = origin ? [origin] : [];
+  } else {
+    origins = PROVIDER_ORIGINS[provider] && apiKey ? [PROVIDER_ORIGINS[provider]] : [];
+  }
   if (origins.length === 0) return;
   try {
     const granted = await chrome.permissions.request({ origins });
@@ -189,7 +212,7 @@ async function saveSettings() {
   };
 
   await chrome.storage.local.set({ settings });
-  await requestProviderPermissionIfNeeded(settings.provider, settings.apiKey);
+  await requestProviderPermissionIfNeeded(settings.provider, settings.apiKey, settings.baseUrl);
   showStatus("Settings saved!", "success");
 }
 
