@@ -6,6 +6,9 @@ export interface OllamaOptions {
   numPredict?: number;
   temperature?: number;
   topP?: number;
+  /** Overrides LLM_TIMEOUT_MS for this call (e.g. resume extraction, a
+   *  heavier one-shot call that can legitimately take longer). */
+  timeoutMs?: number;
 }
 
 export interface OllamaStreamCallbacks {
@@ -19,11 +22,12 @@ export async function ollamaGenerate(
   prompt: string,
   opts: OllamaOptions,
 ): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? LLM_TIMEOUT_MS;
   try {
     const r = await fetch(`${opts.baseUrl}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
         model: opts.model,
         system,
@@ -42,7 +46,7 @@ export async function ollamaGenerate(
     if (!text && data.thinking) text = data.thinking.trim();
     return text;
   } catch (e) {
-    if (isTimeoutAbort(e)) throw new Error(`Ollama request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+    if (isTimeoutAbort(e)) throw new Error(`Ollama request timed out after ${timeoutMs / 1000}s`);
     throw e;
   }
 }

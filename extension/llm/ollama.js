@@ -1,10 +1,11 @@
 import { LLM_TIMEOUT_MS, isTimeoutAbort } from "./constants.js";
 export async function ollamaGenerate(system, prompt, opts) {
+    const timeoutMs = opts.timeoutMs ?? LLM_TIMEOUT_MS;
     try {
         const r = await fetch(`${opts.baseUrl}/api/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+            signal: AbortSignal.timeout(timeoutMs),
             body: JSON.stringify({
                 model: opts.model,
                 system,
@@ -27,7 +28,7 @@ export async function ollamaGenerate(system, prompt, opts) {
     }
     catch (e) {
         if (isTimeoutAbort(e))
-            throw new Error(`Ollama request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+            throw new Error(`Ollama request timed out after ${timeoutMs / 1000}s`);
         throw e;
     }
 }

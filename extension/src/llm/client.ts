@@ -53,10 +53,21 @@ async function withSingleRetry(fn: () => Promise<string>): Promise<string> {
   }
 }
 
+export interface LLMGenerateOverrides {
+  /** Longer than the default LLM_TIMEOUT_MS, for heavier one-shot calls
+   *  (e.g. resume extraction) that can legitimately take longer than a
+   *  quick per-field answer. */
+  timeoutMs?: number;
+  /** Larger than the default 1024, for calls with bigger structured output
+   *  (e.g. a full resume's extracted fields). */
+  maxTokens?: number;
+}
+
 export async function llmGenerate(
   system: string,
   prompt: string,
   settings: ExtensionSettings,
+  overrides?: LLMGenerateOverrides,
 ): Promise<string> {
   const model = resolveModel(settings);
 
@@ -65,6 +76,8 @@ export async function llmGenerate(
       return ollamaGenerate(system, prompt, {
         baseUrl: settings.ollamaUrl || "http://127.0.0.1:11434",
         model,
+        timeoutMs: overrides?.timeoutMs,
+        numPredict: overrides?.maxTokens,
       });
     }
 
@@ -72,6 +85,8 @@ export async function llmGenerate(
       return anthropicGenerate(system, prompt, {
         apiKey: settings.apiKey,
         model,
+        timeoutMs: overrides?.timeoutMs,
+        maxTokens: overrides?.maxTokens,
       });
     }
 
@@ -80,6 +95,8 @@ export async function llmGenerate(
       baseUrl: resolveBaseUrl(settings),
       apiKey: settings.apiKey,
       model,
+      timeoutMs: overrides?.timeoutMs,
+      maxTokens: overrides?.maxTokens,
     });
   });
 }

@@ -47,19 +47,23 @@ async function withSingleRetry(fn) {
         return await fn();
     }
 }
-export async function llmGenerate(system, prompt, settings) {
+export async function llmGenerate(system, prompt, settings, overrides) {
     const model = resolveModel(settings);
     return withSingleRetry(() => {
         if (settings.provider === "ollama") {
             return ollamaGenerate(system, prompt, {
                 baseUrl: settings.ollamaUrl || "http://127.0.0.1:11434",
                 model,
+                timeoutMs: overrides?.timeoutMs,
+                numPredict: overrides?.maxTokens,
             });
         }
         if (settings.provider === "anthropic") {
             return anthropicGenerate(system, prompt, {
                 apiKey: settings.apiKey,
                 model,
+                timeoutMs: overrides?.timeoutMs,
+                maxTokens: overrides?.maxTokens,
             });
         }
         // OpenAI, Groq, OpenAI-compatible all use the same API format
@@ -67,6 +71,8 @@ export async function llmGenerate(system, prompt, settings) {
             baseUrl: resolveBaseUrl(settings),
             apiKey: settings.apiKey,
             model,
+            timeoutMs: overrides?.timeoutMs,
+            maxTokens: overrides?.maxTokens,
         });
     });
 }

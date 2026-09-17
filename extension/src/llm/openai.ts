@@ -7,6 +7,9 @@ export interface OpenAIOptions {
   temperature?: number;
   topP?: number;
   maxTokens?: number;
+  /** Overrides LLM_TIMEOUT_MS for this call (e.g. resume extraction, a
+   *  heavier one-shot call that can legitimately take longer). */
+  timeoutMs?: number;
 }
 
 export interface OpenAIStreamCallbacks {
@@ -20,6 +23,7 @@ export async function openaiGenerate(
   prompt: string,
   opts: OpenAIOptions,
 ): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? LLM_TIMEOUT_MS;
   try {
     const r = await fetch(`${opts.baseUrl}/chat/completions`, {
       method: "POST",
@@ -27,7 +31,7 @@ export async function openaiGenerate(
         "Content-Type": "application/json",
         Authorization: `Bearer ${opts.apiKey}`,
       },
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
         model: opts.model,
         messages: [
@@ -44,7 +48,7 @@ export async function openaiGenerate(
     const data = await r.json();
     return (data.choices?.[0]?.message?.content ?? "").trim();
   } catch (e) {
-    if (isTimeoutAbort(e)) throw new Error(`OpenAI request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+    if (isTimeoutAbort(e)) throw new Error(`OpenAI request timed out after ${timeoutMs / 1000}s`);
     throw e;
   }
 }

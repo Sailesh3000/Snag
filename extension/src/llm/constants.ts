@@ -1,9 +1,16 @@
 // Shared across all providers so "Generating answer..." can never hang
 // forever — see llm/client.ts (retry) and each provider's generate/stream
-// functions (AbortSignal.timeout). Local models (Ollama, no GPU) and
-// larger prompts (e.g. resume field extraction) can legitimately take a
-// while, so this is generous rather than tight.
+// functions (AbortSignal.timeout). Default for normal per-field answer
+// generation, where a quick failure (dead network, crashed local model)
+// should surface fast rather than leave the UI spinning.
 export const LLM_TIMEOUT_MS = 90000;
+
+// Resume extraction is a heavier one-shot call (the full resume text as
+// input, a large structured JSON object as output) — genuinely slower on
+// local CPU-only Ollama than a short answer, and the user explicitly
+// triggered it, so a longer wait before giving up is the right tradeoff
+// here specifically (see llm/client.ts's optional `opts` param).
+export const RESUME_EXTRACTION_TIMEOUT_MS = 240000;
 
 // AbortSignal.timeout()'s abort reason is a "TimeoutError" DOMException, and
 // that's what the top-level fetch() promise rejects with — but Chrome's

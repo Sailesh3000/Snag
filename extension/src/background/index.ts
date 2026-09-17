@@ -36,6 +36,7 @@ import { findSimilar } from "../similarity.js";
 import { deleteAnswer, getAnswers, getProfile, saveAnswer, setProfileField, updateAnswer } from "../storage/db.js";
 import { getSettings } from "../shared/config.js";
 import { llmGenerate, llmGenerateStream } from "../llm/client.js";
+import { RESUME_EXTRACTION_TIMEOUT_MS } from "../llm/constants.js";
 
 interface RuntimeMessage {
   type: string;
@@ -258,7 +259,10 @@ async function handleResumeExtract(tabId: number, payload: Record<string, unknow
 
   try {
     const prompt = buildResumeExtractionPrompt(resumeText);
-    const raw = await llmGenerate(RESUME_EXTRACTION_SYSTEM, prompt, settings);
+    const raw = await llmGenerate(RESUME_EXTRACTION_SYSTEM, prompt, settings, {
+      timeoutMs: RESUME_EXTRACTION_TIMEOUT_MS,
+      maxTokens: 2048,
+    });
     const fields = parseResumeExtractionJson(raw);
     sendToTab(tabId, { type: "resume:extracted", payload: { fields, error: null } });
   } catch (e) {

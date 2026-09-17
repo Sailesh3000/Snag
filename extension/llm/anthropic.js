@@ -2,6 +2,7 @@ import { LLM_TIMEOUT_MS, isTimeoutAbort } from "./constants.js";
 const ANTHROPIC_API = "https://api.anthropic.com";
 const ANTHROPIC_VERSION = "2023-06-01";
 export async function anthropicGenerate(system, prompt, opts) {
+    const timeoutMs = opts.timeoutMs ?? LLM_TIMEOUT_MS;
     try {
         const r = await fetch(`${ANTHROPIC_API}/v1/messages`, {
             method: "POST",
@@ -10,7 +11,7 @@ export async function anthropicGenerate(system, prompt, opts) {
                 "x-api-key": opts.apiKey,
                 "anthropic-version": ANTHROPIC_VERSION,
             },
-            signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+            signal: AbortSignal.timeout(timeoutMs),
             body: JSON.stringify({
                 model: opts.model,
                 system,
@@ -27,7 +28,7 @@ export async function anthropicGenerate(system, prompt, opts) {
     }
     catch (e) {
         if (isTimeoutAbort(e))
-            throw new Error(`Anthropic request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+            throw new Error(`Anthropic request timed out after ${timeoutMs / 1000}s`);
         throw e;
     }
 }

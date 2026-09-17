@@ -5,6 +5,9 @@ export interface AnthropicOptions {
   model: string;
   temperature?: number;
   maxTokens?: number;
+  /** Overrides LLM_TIMEOUT_MS for this call (e.g. resume extraction, a
+   *  heavier one-shot call that can legitimately take longer). */
+  timeoutMs?: number;
 }
 
 export interface AnthropicStreamCallbacks {
@@ -21,6 +24,7 @@ export async function anthropicGenerate(
   prompt: string,
   opts: AnthropicOptions,
 ): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? LLM_TIMEOUT_MS;
   try {
     const r = await fetch(`${ANTHROPIC_API}/v1/messages`, {
       method: "POST",
@@ -29,7 +33,7 @@ export async function anthropicGenerate(
         "x-api-key": opts.apiKey,
         "anthropic-version": ANTHROPIC_VERSION,
       },
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
         model: opts.model,
         system,
@@ -43,7 +47,7 @@ export async function anthropicGenerate(
     const textBlock = data.content?.find((b: { type: string }) => b.type === "text");
     return (textBlock?.text ?? "").trim();
   } catch (e) {
-    if (isTimeoutAbort(e)) throw new Error(`Anthropic request timed out after ${LLM_TIMEOUT_MS / 1000}s`);
+    if (isTimeoutAbort(e)) throw new Error(`Anthropic request timed out after ${timeoutMs / 1000}s`);
     throw e;
   }
 }

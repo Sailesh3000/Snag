@@ -167,4 +167,16 @@ describe("ollamaGenerate (non-streaming)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("network down"); }));
     await expect(ollamaGenerate("sys", "prompt", { baseUrl: "http://x", model: "m" })).rejects.toThrow(/network down/);
   });
+
+  it("uses a custom timeoutMs instead of the default, and reports it in the error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("The operation was aborted", "TimeoutError");
+      }),
+    );
+    await expect(
+      ollamaGenerate("sys", "prompt", { baseUrl: "http://x", model: "m", timeoutMs: 240000 }),
+    ).rejects.toThrow(/timed out after 240s/);
+  });
 });
