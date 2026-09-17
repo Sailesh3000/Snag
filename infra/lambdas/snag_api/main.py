@@ -1,13 +1,12 @@
-"""Snag API — Phase 2 (revised): license gate + Bedrock-backed embeddings only.
+"""Snag API — free, no billing: identity check + Bedrock-backed embeddings.
 
-LLM *generation* is BYOK again — the extension calls Anthropic/OpenAI
-directly with the user's own key (extension/src/llm/client.ts), so this
-backend never spends money on tokens and holds no LLM provider key at all.
-The $5/month subscription instead gates (a) using Snag at all — a plain
-license check — and (b) the one thing still worth centralizing: semantic
-"similar past answers" memory matching, via Amazon Bedrock Titan
-Embeddings, which is IAM-only (no external API key, no per-user secret)
-and cheap enough for one subscription to fund many users' usage.
+LLM *generation* is BYOK — the extension calls Anthropic/OpenAI directly
+with the user's own key (extension/src/llm/client.ts), so this backend
+never spends money on tokens and holds no LLM provider key at all. There is
+no subscription or paid tier: every signed-in user gets full access. The
+one thing still centralized here is semantic "similar past answers"
+memory matching, via Amazon Bedrock Titan Embeddings, which is IAM-only
+(no external API key, no per-user secret).
 
 Routes (the API Gateway Cognito JWT authorizer validates the access token
 before anything reaches this Lambda; verified claims arrive in
@@ -15,14 +14,12 @@ event["requestContext"]["authorizer"]["jwt"]["claims"] — HTTP API's JWT
 authorizer nests them under "jwt", unlike a REST API/v1 custom authorizer's
 flatter shape — and `sub` is the only per-user key the backend ever needs):
 
-  GET  /api/me      -> {sub, email, subscriptionStatus, currentPeriodEnd}
+  GET  /api/me      -> {sub, email} — confirms the token is valid
   POST /api/embed    -> {"embedding": [...]} (Bedrock Titan Text Embeddings v2)
 
-Gating (revised A4): no `status == "active"` SUBSCRIPTION item on /api/embed
--> 402 {error:"subscription_required"}; a daily abuse ceiling still applies
-(cost protection on the Bedrock spend, not a marketed limit) -> 429
-{error:"rate_limited", resetsAt}. /api/me itself is not gated — it's how
-the extension checks subscription status in the first place.
+Gating: /api/embed requires a signed-in `sub` (401 otherwise) and is
+subject to a daily abuse ceiling (429, cost protection on the Bedrock
+spend only — not a marketed limit, there is nothing to subscribe to).
 
 Stdlib + boto3 only: no third-party deps, so `cdk synth`/deploy work from
 any host for an ARM_64 runtime — no Docker bundling step.
@@ -39,50 +36,21 @@ bedrock = boto3.client("bedrock-runtime")
 TABLE_NAME = os.environ["SNAG_TABLE"]
 TABLE = dynamodb.Table(TABLE_NAME)
 
-# Abuse ceiling on Bedrock spend (this is the only metered call now that
-# generation is BYOK) — well above realistic single-user usage.
+# Abuse ceiling on Bedrock spend (this is the only metered call) — well
+# above realistic single-user usage.
 EMBED_CAP_PER_DAY = 500
-
-# Free-access allowlist (dev/owner accounts) — bypasses the subscription
-# gate entirely, on both /api/me (so the sidebar shows Pro status) and
-# /api/embed (so the gate itself doesn't block it). Case-insensitive.
-FREE_EMAILS = {"chandrasailesh30@gmail.com"}
 
 BEDROCK_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
 
 
 # --- DynamoDB helpers ------------------------------------------------------
 
-def _get_item(pk, sk):
-    resp = TABLE.get_item(Key={"pk": pk, "sk": sk})
-    return resp.get("Item") or {}
-
-
-def _subscription(sub):
-    return _get_item(f"USER#{sub}", "SUBSCRIPTION")
-
-
-def _is_free_account(email):
-    return bool(email) and email.lower() in FREE_EMAILS
-
-
-def _require_subscription(sub, email=""):
-    """200-OK gate, or the 402 response."""
-    if not sub:
-        return _json(401, {"error": "unauthorized"})
-    if _is_free_account(email):
-        return None
-    if _subscription(sub).get("status") != "active":
-        return _json(402, {"error": "subscription_required"})
-    return None
-
-
 def _bump_usage(sub, kind):
     """Atomically increment the daily+monthly usage counters.
 
     Returns None on success, or the 429 response when the daily ceiling is
-    reached. The counter item is `USAGE#<YYYY-MM>` (plan A2): new month =
-    new item, no reset job. The daily window lives in two attributes
+    reached. The counter item is `USAGE#<YYYY-MM>`: new month = new item,
+    no reset job. The daily window lives in two attributes
     (`<kind>Day` / `<kind>DayCount`) and is re-baselined lazily on first
     use of the new day.
 
@@ -178,28 +146,19 @@ def handler(event, context):
     if method == "GET" and path == "/api/me":
         return get_me(sub, email)
     if method == "POST" and path == "/api/embed":
-        return embed(sub, email, body)
+        return embed(sub, body)
     return _json(404, {"error": "not_found", "path": path})
 
 
 def get_me(sub, email=""):
     if not sub:
         return _json(401, {"error": "unauthorized"})
-    if _is_free_account(email):
-        return _json(200, {"sub": sub, "email": email, "subscriptionStatus": "active", "currentPeriodEnd": None})
-    item = _subscription(sub)
-    return _json(200, {
-        "sub": sub,
-        "email": email,
-        "subscriptionStatus": item.get("status", "none"),
-        "currentPeriodEnd": item.get("currentPeriodEnd"),
-    })
+    return _json(200, {"sub": sub, "email": email})
 
 
-def embed(sub, email, body):
-    denied = _require_subscription(sub, email)
-    if denied:
-        return denied
+def embed(sub, body):
+    if not sub:
+        return _json(401, {"error": "unauthorized"})
 
     text = body.get("text") or ""
     if not text.strip():

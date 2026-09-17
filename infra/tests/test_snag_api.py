@@ -1,9 +1,10 @@
 """Unit tests for infra/lambdas/snag_api/main.py (boto3 mocked).
 
-LLM generation is BYOK (extension calls Anthropic/OpenAI directly) — this
-backend only ever does a license check (/api/me) and Bedrock-backed
-embeddings (/api/embed), so there is no provider-key/SSM surface to test
-here at all; Bedrock is IAM-only.
+Free product, no billing: LLM generation is BYOK (extension calls
+Anthropic/OpenAI directly) — this backend only ever does an identity
+check (/api/me) and Bedrock-backed embeddings (/api/embed), gated only on
+being signed in plus a daily abuse ceiling on the Bedrock spend. Bedrock is
+IAM-only, so there is no provider-key/SSM surface to test here at all.
 """
 import importlib.util
 import json
@@ -82,44 +83,15 @@ def _body(resp):
     return json.loads(resp["body"])
 
 
-def _active_sub_table():
-    return _FakeTable({("USER#user-1", "SUBSCRIPTION"): {"status": "active"}})
-
-
 # --- GET /api/me -------------------------------------------------------------
 
-def test_get_me_with_active_subscription(main, monkeypatch):
-    table = _FakeTable({("USER#user-1", "SUBSCRIPTION"): {"status": "active", "currentPeriodEnd": "2026-10-01T00:00:00Z"}})
-    _patch_infra(monkeypatch, main, table=table)
-
-    resp = main.handler(_event("GET", "/api/me"), None)
-
-    assert resp["statusCode"] == 200
-    assert _body(resp) == {
-        "sub": "user-1",
-        "email": "a@b.c",
-        "subscriptionStatus": "active",
-        "currentPeriodEnd": "2026-10-01T00:00:00Z",
-    }
-
-
-def test_get_me_reports_active_for_a_free_allowlisted_email_with_no_real_subscription(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_FakeTable())  # no SUBSCRIPTION item at all
-
-    resp = main.handler(_event("GET", "/api/me", email="chandrasailesh30@gmail.com"), None)
-
-    assert resp["statusCode"] == 200
-    assert _body(resp)["subscriptionStatus"] == "active"
-
-
-def test_get_me_without_subscription_item(main, monkeypatch):
+def test_get_me_returns_sub_and_email(main, monkeypatch):
     _patch_infra(monkeypatch, main, table=_FakeTable())
 
     resp = main.handler(_event("GET", "/api/me"), None)
 
     assert resp["statusCode"] == 200
-    assert _body(resp)["subscriptionStatus"] == "none"
-    assert _body(resp)["currentPeriodEnd"] is None
+    assert _body(resp) == {"sub": "user-1", "email": "a@b.c"}
 
 
 def test_get_me_without_sub_is_401(main, monkeypatch):
@@ -145,27 +117,16 @@ def test_unknown_path_is_404(main, monkeypatch):
 
 # --- POST /api/embed -----------------------------------------------------------
 
-def test_embed_requires_subscription(main, monkeypatch):
+def test_embed_requires_sub(main, monkeypatch):
     _patch_infra(monkeypatch, main, table=_FakeTable())
 
-    resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
+    resp = main.handler(_event("POST", "/api/embed", sub="", body={"text": "hello"}), None)
 
-    assert resp["statusCode"] == 402
-
-
-def test_embed_bypasses_the_gate_for_a_free_allowlisted_email(main, monkeypatch):
-    table = _FakeTable()  # no SUBSCRIPTION item — would 402 for anyone else
-    _patch_infra(monkeypatch, main, table=table)
-    monkeypatch.setattr(main, "_titan_embed", lambda text: ([0.1], None))
-
-    resp = main.handler(_event("POST", "/api/embed", email="chandrasailesh30@gmail.com", body={"text": "hello"}), None)
-
-    assert resp["statusCode"] == 200
-    assert _body(resp) == {"embedding": [0.1]}
+    assert resp["statusCode"] == 401
 
 
 def test_embed_requires_text(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_active_sub_table())
+    _patch_infra(monkeypatch, main, table=_FakeTable())
 
     resp = main.handler(_event("POST", "/api/embed", body={"text": ""}), None)
 
@@ -174,7 +135,7 @@ def test_embed_requires_text(main, monkeypatch):
 
 
 def test_embed_returns_bedrock_titan_vector(main, monkeypatch):
-    table = _active_sub_table()
+    table = _FakeTable()
     _patch_infra(monkeypatch, main, table=table)
 
     seen = {}
@@ -195,7 +156,7 @@ def test_embed_returns_bedrock_titan_vector(main, monkeypatch):
 
 
 def test_embed_provider_error_is_502(main, monkeypatch):
-    _patch_infra(monkeypatch, main, table=_active_sub_table())
+    _patch_infra(monkeypatch, main, table=_FakeTable())
     monkeypatch.setattr(main, "_titan_embed", lambda text: (None, (502, "bedrock error AccessDeniedException: nope")))
 
     resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
@@ -205,10 +166,7 @@ def test_embed_provider_error_is_502(main, monkeypatch):
 
 
 def test_embed_daily_cap_is_429_with_resets_at(main, monkeypatch):
-    table = _FakeTable(
-        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
-        update_results=[{"Attributes": {"embedDayCount": 501}}],
-    )
+    table = _FakeTable(update_results=[{"Attributes": {"embedDayCount": 501}}])
     _patch_infra(monkeypatch, main, table=table)
 
     resp = main.handler(_event("POST", "/api/embed", body={"text": "hello"}), None)
@@ -224,10 +182,7 @@ def test_embed_bumps_usage_atomically_same_day(main, monkeypatch):
 
     today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
     this_month = today[:7]
-    table = _FakeTable(
-        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
-        update_results=[{"Attributes": {"embedDayCount": 1}}],
-    )
+    table = _FakeTable(update_results=[{"Attributes": {"embedDayCount": 1}}])
     _patch_infra(monkeypatch, main, table=table)
     monkeypatch.setattr(main, "_titan_embed", lambda text: ([0.0], None))
 
@@ -243,10 +198,7 @@ def test_embed_bumps_usage_atomically_same_day(main, monkeypatch):
 
 
 def test_embed_day_boundary_rebaselines_then_counts(main, monkeypatch):
-    table = _FakeTable(
-        {("USER#user-1", "SUBSCRIPTION"): {"status": "active"}},
-        update_results=[_ccf(), {"Attributes": {"embedDayCount": 1}}],
-    )
+    table = _FakeTable(update_results=[_ccf(), {"Attributes": {"embedDayCount": 1}}])
     _patch_infra(monkeypatch, main, table=table)
     monkeypatch.setattr(main, "_titan_embed", lambda text: ([0.0], None))
 

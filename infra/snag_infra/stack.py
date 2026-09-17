@@ -1,13 +1,17 @@
 """Snag serverless backend — CDK stack.
 
-Thin proxy, not a data store (see the migration plan, Part A):
+Thin proxy, not a data store:
   - Cognito User Pool + public OAuth client (Hosted UI, PKCE auth-code flow)
-  - One tiny DynamoDB table: subscription status + usage counters, nothing else
-  - SSM Parameter Store (SecureString) placeholders for provider/webhook secrets
+  - One tiny DynamoDB table: usage counters only (abuse/cost protection on
+    Bedrock embed calls) — nothing else
   - API Gateway HTTP API with a built-in Cognito JWT authorizer on the
-    $default route; the Paddle webhook route is unauthenticated (HMAC-verified
-    in-Lambda)
-  - Two Lambdas: snag-api (JWT-gated) and snag-paddle-webhook (HMAC-gated)
+    $default route
+  - One Lambda: snag-api (JWT-gated)
+
+Free product, no billing: every signed-in user has full access. LLM
+generation is BYOK (the extension calls Anthropic/OpenAI/Groq/Ollama
+directly with the user's own key) and embeddings use Bedrock (IAM-only,
+no secret) — this backend holds no external API keys at all.
 
 No S3, no profile/resume/answer storage, no per-user session state — user data
 lives in the extension's IndexedDB.
@@ -90,38 +94,19 @@ class SnagStack(Stack):
         )
 
         # --- DynamoDB (tiny, single-purpose) -------------------------------
-        # Webhook idempotency items (WEBHOOK#<id>/RECEIVED) carry a `ttl` so
-        # retried Paddle deliveries stay deduplicated for ~30 days and then
-        # age out — no cleanup job needed. `ttl` is not a key attribute, so it
-        # must NOT appear in AttributeDefinitions (DynamoDB rejects a mismatch
-        # between AttributeDefinitions and the actual key schema/indexes) —
-        # time_to_live_attribute alone is sufficient to enable it.
+        # Only item type: USAGE#<YYYY-MM> per-user counters, atomically
+        # incremented to cap daily /api/embed calls (Bedrock cost protection,
+        # not billing — the product is free). No TTL needed since usage
+        # items are small and naturally bounded (one per user per month).
         table = ddb.Table(
             self, "SnagBillingTable",
             partition_key=ddb.Attribute(name="pk", type=ddb.AttributeType.STRING),
             sort_key=ddb.Attribute(name="sk", type=ddb.AttributeType.STRING),
             billing_mode=ddb.BillingMode.PAY_PER_REQUEST,  # on-demand
-            time_to_live_attribute="ttl",
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # --- SSM Parameter Store (SecureString secrets) ---------------------
-        # LLM generation is BYOK (extension calls Anthropic/OpenAI directly
-        # with the user's own key) — this backend holds no LLM provider key
-        # at all. Embeddings use Bedrock (IAM-only, no secret needed either).
-        # The only secret left is the Paddle webhook signing secret.
-        # CloudFormation cannot create SecureString parameters (AWS::SSM::Parameter
-        # only supports String/StringList), so it is NOT a CDK-managed resource.
-        # Set the real value once, out-of-band, after this stack deploys:
-        #   aws ssm put-parameter --name /snag/paddle_webhook_secret --type SecureString --value <secret>
-        # (paddle_api_key is not read by any Lambda yet — only add it if a
-        # future feature needs to call Paddle's API directly, e.g. querying
-        # subscription status server-side instead of relying on webhooks.)
-        # The IAM grant below references the ARN only, so the stack deploys
-        # fine before the parameter exists — the webhook Lambda just fails at
-        # runtime (ParameterNotFound) until the value above is set.
-
-        # --- Lambdas -------------------------------------------------------
+        # --- Lambda ----------------------------------------------------------
         snag_api = _lambda.Function(
             self, "SnagApiFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
@@ -132,7 +117,7 @@ class SnagStack(Stack):
             memory_size=256,
             timeout=Duration.seconds(15),
             log_retention=logs.RetentionDays.ONE_MONTH,
-            description="Snag API: /api/me (license check), /api/embed (Bedrock Titan) — subscription-gated, stateless",
+            description="Snag API: /api/me (identity check), /api/embed (Bedrock Titan) — free, stateless",
         )
         # read_write: embed atomically increments USAGE#<YYYY-MM>.
         table.grant_read_write_data(snag_api)
@@ -145,35 +130,10 @@ class SnagStack(Stack):
             ],
         ))
 
-        paddle_webhook = _lambda.Function(
-            self, "SnagPaddleWebhookFunction",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="main.handler",
-            code=_lambda.Code.from_asset(os.path.join(LAMBDA_DIR, "snag_paddle_webhook")),
-            environment={"SNAG_TABLE": table.table_name},
-            architecture=_lambda.Architecture.ARM_64,
-            memory_size=128,
-            timeout=Duration.seconds(15),
-            log_retention=logs.RetentionDays.ONE_MONTH,
-            description="Snag Paddle webhook: HMAC-verified; subscription events -> SUBSCRIPTION item (idempotent, TTL'd)",
-        )
-        table.grant_read_write_data(paddle_webhook)
-        # HMAC secret is read from SSM at runtime (see main.py), not via the env.
-        # L1 CfnParameter has no grant helper, so grant GetParameter explicitly.
-        paddle_webhook.role.add_to_policy(iam.PolicyStatement(
-            actions=["ssm:GetParameter"],
-            resources=[f"arn:aws:ssm:{self.region}:{self.account}:parameter/snag/paddle_webhook_secret"],
-        ))
-
-        # --- API Gateway: two HTTP APIs ------------------------------------
-        # SnagApi (JWT-gated): the Cognito JWT authorizer guards the catch-all
-        # route -> snag-api. The extension calls /api/me and /api/embed here;
-        # LLM generation is BYOK and never touches this backend.
-        # SnagWebhookApi (unauthenticated): catch-all -> snag-paddle-webhook.
-        # Paddle signs the request body with HMAC (verified in-Lambda), so this
-        # API must not require a JWT. In this CDK version a single API's default
-        # authorizer applies to *every* route (no per-route "none"), so the two
-        # auth models live on two small, cheap HTTP APIs.
+        # --- API Gateway: HTTP API ------------------------------------------
+        # The Cognito JWT authorizer guards the catch-all route -> snag-api.
+        # The extension calls /api/me and /api/embed here; LLM generation is
+        # BYOK and never touches this backend.
         authorizer = apigwv2_auth.HttpUserPoolAuthorizer(
             id="SnagCognitoAuthorizer",
             pool=user_pool,
@@ -191,14 +151,8 @@ class SnagStack(Stack):
             ),
         )
 
-        webhook_api = apigwv2.HttpApi(
-            self, "SnagWebhookApi",
-            default_integration=apigwv2_int.HttpLambdaIntegration("SnagWebhookInteg", paddle_webhook),
-        )
-
         # --- Outputs -------------------------------------------------------
         CfnOutput(self, "ApiUrl", value=api.api_endpoint, description="JWT-gated HTTP API base URL (extension)")
-        CfnOutput(self, "WebhookApiUrl", value=webhook_api.api_endpoint, description="Paddle webhook URL (unauthenticated, HMAC-verified)")
         CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
         CfnOutput(self, "CognitoDomain", value=f"https://{user_pool_domain.domain_name}.auth.{self.region}.amazoncognito.com", description="Cognito Hosted UI domain")
         CfnOutput(self, "UserPoolClientId", value=app_client.user_pool_client_id)

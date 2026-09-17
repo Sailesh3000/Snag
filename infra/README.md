@@ -2,16 +2,16 @@
 
 Thin, stateless proxy backend for the Snag Chrome extension. It is **not** a
 data store: all durable user data (profile, resumes, answer memory, embeddings)
-lives in the extension's local IndexedDB. The only things authoritative
-server-side are **subscription status** and **usage counters** (DynamoDB).
+lives in the extension's local IndexedDB. Free product, no billing — the only
+thing authoritative server-side is a small **usage counter** (DynamoDB) that
+caps daily Bedrock embedding calls as cost protection.
 
 LLM *generation* is BYOK — the extension calls Anthropic/OpenAI/Groq/Ollama
 directly with the user's own key, so this backend never sees a prompt and
-holds no LLM provider key at all. The subscription instead gates (a) using
-Snag at all (a license check via `/api/me`) and (b) the one thing still
-centralized: semantic "similar past answers" matching via **Amazon Bedrock
-Titan Embeddings** (`/api/embed`), which is IAM-only — no external API key,
-no secret in SSM.
+holds no LLM provider key at all. The one thing still centralized here is
+semantic "similar past answers" matching via **Amazon Bedrock Titan
+Embeddings** (`/api/embed`), which is IAM-only — no external API key, no
+secret anywhere.
 
 ## Layout
 
@@ -21,10 +21,9 @@ infra/
 ├── cdk.json
 ├── requirements.txt             # aws-cdk-lib + constructs
 ├── snag_infra/
-│   └── stack.py                 # SnagStack: Cognito, DynamoDB, SSM, 2 HTTP APIs, 2 Lambdas
+│   └── stack.py                 # SnagStack: Cognito, DynamoDB, 1 HTTP API, 1 Lambda
 └── lambdas/
-    ├── snag_api/main.py         # /api/me (license check) + /api/embed (Bedrock Titan) — subscription-gated
-    └── snag_paddle_webhook/main.py  # Paddle webhook: HMAC-verified, idempotent subscription event processing
+    └── snag_api/main.py         # /api/me (identity check) + /api/embed (Bedrock Titan)
 ```
 
 ## What the stack creates
@@ -32,12 +31,12 @@ infra/
 | Resource | Notes |
 |---|---|
 | Cognito User Pool + public OAuth client | Hosted UI, PKCE authorization-code flow (no client secret) |
-| DynamoDB `SnagBillingTable` | on-demand, `pk`/`sk` keys — subscription + usage counters only |
-| SSM Parameter Store (SecureString) | `/snag/paddle_api_key`, `/snag/paddle_webhook_secret` (no LLM/embedding provider keys — Bedrock is IAM-only) |
+| DynamoDB `SnagBillingTable` | on-demand, `pk`/`sk` keys — usage counters only |
 | API Gateway **HTTP** API `SnagApi` | catch-all route gated by a Cognito **JWT authorizer** — the extension's `/api/*` calls |
-| API Gateway **HTTP** API `SnagWebhookApi` | catch-all route, unauthenticated (HMAC verified in-Lambda) — Paddle webhooks |
-| Lambda `snag-api` | ARM, 256MB, 15s — reads subscription, writes usage counters, calls Bedrock via IAM (`bedrock:InvokeModel`, no secret) |
-| Lambda `snag-paddle-webhook` | ARM, 128MB, reads the webhook secret from SSM |
+| Lambda `snag-api` | ARM, 256MB, 15s — checks the signed-in `sub`, writes usage counters, calls Bedrock via IAM (`bedrock:InvokeModel`, no secret) |
+
+No SSM parameters, no secrets at all — Bedrock is IAM-only and there is
+nothing else this backend needs to authenticate to.
 
 ## Prerequisites
 
@@ -61,23 +60,11 @@ cdk deploy               # deploy (needs AWS creds; ExtensionCallbackUrl has a d
 > (activate the venv first), and `ap-south-1` requires a one-time
 > region opt-in.
 
-## Secrets (set out-of-band, never in CI)
-
-```bash
-aws ssm put-parameter --name /snag/paddle_api_key    --type SecureString --value "<key>"
-aws ssm put-parameter --name /snag/paddle_webhook_secret --type SecureString --value "<secret>"
-```
-
-No Anthropic/OpenAI key is needed here — generation is BYOK (the extension
-holds the user's own key) and embeddings use Bedrock (IAM-only).
-
 ## DynamoDB item shape
 
 | Item | pk | sk | Fields |
 |---|---|---|---|
-| Subscription | `USER#<sub>` | `SUBSCRIPTION` | `status` (`active`/`cancelled`/`past_due`), `currentPeriodEnd`, `paddleSubscriptionId` |
-| Usage counter | `USER#<sub>` | `USAGE#<YYYY-MM>` | `generateCount`, `embedCount` (atomic conditional increments) |
-| Webhook idempotency | `WEBHOOK#<paddleEventId>` | `RECEIVED` | `receivedAt` (TTL ~30d, Phase 3) |
+| Usage counter | `USER#<sub>` | `USAGE#<YYYY-MM>` | `embedCount`, `embedDay`, `embedDayCount` (atomic conditional increments) |
 
 ## Endpoints (`snag-api`)
 
@@ -86,29 +73,28 @@ claims is the only per-user key.
 
 | Route | Gating | Behavior |
 |---|---|---|
-| `GET /api/me` | — | `{sub, email, subscriptionStatus, currentPeriodEnd}` — the license check the extension gates all usage on |
-| `POST /api/embed` | 402 unless `status: active`; 429 at 500 calls/day | Bedrock `amazon.titan-embed-text-v2:0` → `{"embedding": [...]}` |
+| `GET /api/me` | — | `{sub, email}` — confirms the token is valid |
+| `POST /api/embed` | 401 unless signed in; 429 at 500 calls/day | Bedrock `amazon.titan-embed-text-v2:0` → `{"embedding": [...]}` |
 
 LLM generation (`answer:generate` in the extension) never reaches this
 backend at all — see `extension/src/llm/client.ts`, which calls the user's
 own configured provider directly. The daily ceiling on `/api/embed`
 (`EMBED_CAP_PER_DAY` in `main.py`) is abuse/cost protection on the Bedrock
-spend only, not a marketed limit. Usage counters live in `USAGE#<YYYY-MM>`
-items: new month = new item, the daily window is re-baselined lazily via
-conditional updates.
+spend only — the product is free, there's no paid tier to protect. Usage
+counters live in `USAGE#<YYYY-MM>` items: new month = new item, the daily
+window is re-baselined lazily via conditional updates.
 
-**Why a plain handler, not FastAPI+Mangum**: with generation gone (BYOK),
-there's no streaming response left in this backend at all — `/api/embed`
-is a single small JSON round-trip. A plain handler keeps the Lambda
-stdlib+boto3-only (no Mangum/FastAPI/Pydantic dependencies to bundle),
-which keeps zip packaging trivial from any host (Windows included) for the
-ARM_64 runtime.
+**Why a plain handler, not FastAPI+Mangum**: there's no streaming response
+in this backend at all — `/api/embed` is a single small JSON round-trip. A
+plain handler keeps the Lambda stdlib+boto3-only (no Mangum/FastAPI/Pydantic
+dependencies to bundle), which keeps zip packaging trivial from any host
+(Windows included) for the ARM_64 runtime.
 
 ## Deploy-time configuration checklist
 
 The extension ships with `REPLACE_WITH_*` placeholders on the client side;
-the infra outputs (`ApiUrl`, `WebhookApiUrl`, `UserPoolId`,
-`UserPoolClientId`) feed them. After the first `cdk deploy`:
+the infra outputs (`ApiUrl`, `UserPoolId`, `UserPoolClientId`,
+`CognitoDomain`) feed them. After the first `cdk deploy`:
 
 1. **Cognito client callback URL** — one URL covers both dev and prod:
    `https://jobacpbllhlmlidhnhoaobcdidjfknif.chromiumapp.org/oauth-callback`.
@@ -119,32 +105,10 @@ the infra outputs (`ApiUrl`, `WebhookApiUrl`, `UserPoolId`,
    deterministic ID whether loaded unpacked or installed from the Chrome
    Web Store — no dev/prod split needed, and this is already the CDK
    stack's `ExtensionCallbackUrl` default (deployed).
-2. **Paddle vendor account**:
-   - Paddle Billing has no plain shareable checkout link — checkout only
-     opens via Paddle.js running on a page you control. Host
-     `docs/checkout/index.html` (already in this repo) via GitHub Pages;
-     it loads Paddle.js, reads `custom_data[cognitoSub]` from the query
-     string, and opens the Overlay checkout for your price ID. Point
-     `PADDLE_CHECKOUT_URL` in `extension/src/shared/pricing.ts` at that
-     page's URL.
-   - The checkout's `successUrl` is `docs/checkout/success.html` (same
-     host) — a plain confirmation page. The extension's existing ~30s
-     alarm poll picks up the subscription flip via `/api/me` shortly after;
-     no `chrome-extension://` confirmation page or extra manifest wiring
-     needed.
-   - `PADDLE_PORTAL_URL` ("Manage subscription") has no fixed Paddle URL
-     either — it's generated per-customer via their API. Until that's
-     wired up, point it at a `mailto:` stopgap (kept in sync across
-     `extension/src/shared/pricing.ts`, `ui/src/lib/pricing.ts`, and
-     `extension/src/settings/index.ts`).
-   - Add a webhook for `subscription.created` / `updated` / `canceled`
-     pointing at `WebhookApiUrl`; its HMAC secret must match
-     `/snag/paddle_webhook_secret` in SSM.
-3. **Extension placeholders** — fill after deploy:
+2. **Extension placeholders** — fill after deploy:
    `extension/src/shared/authConfig.ts` (apiBaseUrl, cognitoDomain from the
-   `CognitoDomain` output — not derived from `UserPoolId`, clientId), the
-   Paddle URLs above, and `ui/src/components/FeedbackModal.tsx`
-   (`FEEDBACK_EMAIL`).
+   `CognitoDomain` output — not derived from `UserPoolId`, clientId), and
+   `ui/src/components/FeedbackModal.tsx` (`FEEDBACK_EMAIL`).
 
 ## CI/CD (GitHub Actions) setup
 
@@ -202,7 +166,6 @@ and builds a zipped extension artifact on `v*` tags. One-time setup:
            "iam:PutRolePolicy", "iam:DeleteRolePolicy",
            "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListRolePolicies",
            "lambda:*", "cognito-idp:*", "dynamodb:*", "apigateway:*", "logs:*",
-           "ssm:PutParameter", "ssm:GetParameter", "ssm:DescribeParameters",
            "s3:GetObject", "s3:PutObject", "s3:ListBucket",
            "s3:GetBucketLocation", "s3:GetBucketVersioning", "s3:PutBucketVersioning"
          ],

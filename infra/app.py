@@ -7,6 +7,6 @@ app = cdk.App()
 SnagStack(
     app,
     "SnagStack",
-    description="Snag serverless backend: Cognito auth, billing table, Paddle webhook, LLM proxy API.",
+    description="Snag serverless backend: Cognito auth, usage-counter table, Bedrock-backed embed API. Free product, no billing.",
 )
 app.synth()
