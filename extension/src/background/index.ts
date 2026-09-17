@@ -23,11 +23,19 @@
 import { apiEmbed, apiMe, ApiError, AuthError, RateLimitedError } from "../shared/api.js";
 import { getSession, isFresh, refreshSession, signOut, startSignIn, type Session } from "../shared/auth.js";
 import { classifyFields, matchStaticFields, type FieldInfo } from "../classify.js";
-import { ANSWER_SYSTEM, buildAnswerPrompt, detectQuestionType, type MemoryEntry } from "../shared/prompt.js";
+import {
+  ANSWER_SYSTEM,
+  buildAnswerPrompt,
+  buildResumeExtractionPrompt,
+  detectQuestionType,
+  parseResumeExtractionJson,
+  RESUME_EXTRACTION_SYSTEM,
+  type MemoryEntry,
+} from "../shared/prompt.js";
 import { findSimilar } from "../similarity.js";
 import { deleteAnswer, getAnswers, getProfile, saveAnswer, setProfileField, updateAnswer } from "../storage/db.js";
 import { getSettings } from "../shared/config.js";
-import { llmGenerateStream } from "../llm/client.js";
+import { llmGenerate, llmGenerateStream } from "../llm/client.js";
 
 interface RuntimeMessage {
   type: string;
@@ -230,6 +238,38 @@ async function handleAnswerGenerate(tabId: number, payload: Record<string, unkno
   }
 }
 
+// --- resume extraction --------------------------------------------------------
+
+async function handleResumeExtract(tabId: number, payload: Record<string, unknown>): Promise<void> {
+  const resumeText = (payload.resumeText as string) || "";
+  if (!resumeText.trim()) {
+    sendToTab(tabId, { type: "resume:extracted", payload: { fields: null, error: "No resume text to extract from." } });
+    return;
+  }
+
+  const settings = await getSettings();
+  if (settings.provider !== "ollama" && !settings.apiKey.trim()) {
+    sendToTab(tabId, {
+      type: "resume:extracted",
+      payload: { fields: null, error: "Add your AI provider's API key in Settings to import a resume." },
+    });
+    return;
+  }
+
+  try {
+    const prompt = buildResumeExtractionPrompt(resumeText);
+    const raw = await llmGenerate(RESUME_EXTRACTION_SYSTEM, prompt, settings);
+    const fields = parseResumeExtractionJson(raw);
+    sendToTab(tabId, { type: "resume:extracted", payload: { fields, error: null } });
+  } catch (e) {
+    console.error("[Snag] resume extraction failed:", e);
+    sendToTab(tabId, {
+      type: "resume:extracted",
+      payload: { fields: null, error: `Couldn't extract profile fields: ${e instanceof Error ? e.message : String(e)}` },
+    });
+  }
+}
+
 // --- fills -------------------------------------------------------------------
 
 async function persistApprovedAnswer(pending: PendingApproval): Promise<void> {
@@ -390,15 +430,7 @@ export function handleRuntimeMessage(message: RuntimeMessage, sender: { tab?: { 
     }
 
     case "resume:extract":
-      // Parked: not yet reimplemented against the local storage layer /
-      // BYOK LLM client (a separate feature from the transport/BYOK pivot).
-      sendToTab(tabId, {
-        type: "resume:extracted",
-        payload: {
-          fields: null,
-          error: "Resume import isn't available yet. For now, add your profile fields manually in the Profile section.",
-        },
-      });
+      handleResumeExtract(tabId, payload).catch((e) => console.error("[Snag] resume:extract failed:", e));
       return;
 
     case "auth:signIn":

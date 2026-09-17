@@ -1,12 +1,13 @@
-// Client-side port of the backend's answer-prompt assembly, so the extension
-// can build the full prompt locally and ship only the final prompt to the
-// server (plan B3: only /api/me, /api/answer/generate, /api/embed leave the
-// browser).
+// Client-side port of the backend's prompt assembly, so the extension can
+// build the full prompt locally and generate answers/extractions via BYOK
+// (the user's own LLM key — see llm/client.ts) without any backend round-trip.
 //
 // Sources (ported 1:1 — do not "improve" wording without porting back):
 //   backend/answer_service.py   :: QUESTION_TYPE_KEYWORDS / detect_question_type
 //                                 / build_prompt / MAX_JOB_DESCRIPTION_CHARS
-//   backend/prompts/templates.py:: ANSWER_SYSTEM / TYPE_HINTS / _template
+//   backend/resume_service.py   :: build_resume_extraction_prompt
+//   backend/prompts/templates.py:: ANSWER_SYSTEM / RESUME_EXTRACTION_SYSTEM /
+//                                 TYPE_HINTS / _template
 //
 // Output must stay byte-compatible with the Python version: the prompt text
 // is what the model conditions on, and drift between the two would make
@@ -104,4 +105,48 @@ export function buildAnswerPrompt(args: BuildAnswerPromptArgs): { prompt: string
     `Answer:`;
 
   return { prompt, questionType: qtype };
+}
+
+// --- resume extraction (ported from backend/resume_service.py + ---------
+// backend/prompts/templates.py::RESUME_EXTRACTION_SYSTEM) -----------------
+
+export const RESUME_EXTRACTION_SYSTEM = `You extract structured profile data from resume text for a job application \
+assistant. Return ONLY a single JSON object — no markdown fences, no commentary.
+
+Rules:
+- Only use information present in the resume text. Never invent or guess a value.
+- If a field isn't in the resume, use "" (or [] for array fields) — do not omit the key.
+- "education" and "experience" are arrays of short human-readable strings, most
+  recent first (e.g. "B.S. Computer Science, XYZ University, 2020" or
+  "Software Engineer, Acme Inc, 2021-2024 — built...").
+- "skills" is an array of short skill/technology strings, no duplicates.
+- Keep values concise; do not include the resume's section headings themselves.
+
+JSON schema (all keys required):
+{
+  "first_name": "", "last_name": "", "email": "", "phone": "",
+  "city": "", "state": "", "country": "",
+  "linkedin": "", "github": "", "portfolio": "",
+  "education": [], "experience": [], "skills": []
+}`;
+
+export function buildResumeExtractionPrompt(resumeText: string): string {
+  return `Resume text:\n\n${resumeText}\n\nExtract the fields now.`;
+}
+
+export interface ExtractedResumeFields {
+  first_name: string; last_name: string; email: string; phone: string;
+  city: string; state: string; country: string;
+  linkedin: string; github: string; portfolio: string;
+  education: string[]; experience: string[]; skills: string[];
+}
+
+/** Models sometimes wrap JSON in ```json ... ``` despite instructions not to. */
+export function parseResumeExtractionJson(raw: string): ExtractedResumeFields {
+  const stripped = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const parsed = JSON.parse(stripped);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Model did not return a JSON object");
+  }
+  return parsed as ExtractedResumeFields;
 }

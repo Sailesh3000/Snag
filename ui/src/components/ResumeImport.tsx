@@ -1,7 +1,26 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import * as pdfjsLib from "pdfjs-dist";
+import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { UseProfileReturn } from "../hooks/useProfile";
 import type { ChannelMessage } from "../hooks/useBackendChannel";
+
+// The worker file ships as a real asset (bundled by Vite, not fetched
+// remotely) so this works fully offline inside the extension — no CDN,
+// no network call, consistent with the local-first design elsewhere.
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+
+async function extractPdfText(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((it) => ("str" in it ? it.str : "")).join(" "));
+  }
+  return pages.join("\n\n");
+}
 
 interface ExtractedFields {
   first_name: string; last_name: string; email: string; phone: string;
@@ -84,17 +103,17 @@ export default function ResumeImport({ profile, send, messages }: ResumeImportPr
     setError(null);
 
     try {
-      // The file is read LOCALLY (plan B3: nothing leaves the machine); only
-      // the extracted-text round-trip for the LLM step goes through the
-      // background, which currently parks it (resume extraction returns with
-      // the local-model / BYOK mode).
+      // The file is read and parsed LOCALLY (nothing leaves the machine at
+      // this step); only the extracted text goes to the background, which
+      // sends it to the user's own configured AI provider (BYOK) to pull
+      // out structured fields.
       const isText = /\.(txt|md)$/i.test(file.name);
       const isPdf = /\.pdf$/i.test(file.name);
       let resumeText: string;
       if (isText) {
         resumeText = await file.text();
       } else if (isPdf) {
-        throw new Error("PDF import needs the local-model mode — it's coming back in a later release. For now, export your resume to .txt and import that.");
+        resumeText = await extractPdfText(file);
       } else {
         throw new Error("Unsupported file type — use .txt, .md, or .pdf.");
       }

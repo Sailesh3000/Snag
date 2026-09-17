@@ -210,6 +210,7 @@ beforeEach(async () => {
   llmState.calls.length = 0;
   await clearAll();
   await clearSession();
+  await localStore.remove("settings"); // isolate BYOK settings between tests
 });
 
 // ---------------------------------------------------------------------------
@@ -443,10 +444,53 @@ describe("profile messages", () => {
   });
 });
 
-describe("parked flows", () => {
-  it("resume:extract replies with a parked error instead of calling an LLM", () => {
-    dispatch({ type: "resume:extract", payload: { resumeText: "Ada Lovelace..." } });
+describe("resume:extract", () => {
+  const EXTRACTED = {
+    first_name: "Ada", last_name: "Lovelace", email: "ada@example.com", phone: "",
+    city: "", state: "", country: "", linkedin: "", github: "", portfolio: "",
+    education: ["Mathematics"], experience: ["Analytical Engine, Engineer"], skills: ["Analysis"],
+  };
+
+  it("extracts fields via BYOK and replies with resume:extracted", async () => {
+    llmState.chunks = [JSON.stringify(EXTRACTED)];
+    dispatch({ type: "resume:extract", payload: { resumeText: "Ada Lovelace, mathematician..." } });
+    await waitFor(() => !!lastOf("resume:extracted"), "resume:extracted");
+
+    expect(lastOf("resume:extracted")!.payload).toEqual({ fields: EXTRACTED, error: null });
+    const call = llmState.calls.at(-1)!;
+    expect(call.system).toMatch(/extract structured profile data/i);
+    expect(call.prompt).toContain("Ada Lovelace, mathematician");
+  });
+
+  it("strips a ```json fenced block the model wasn't supposed to add", async () => {
+    llmState.chunks = ["```json\n" + JSON.stringify(EXTRACTED) + "\n```"];
+    dispatch({ type: "resume:extract", payload: { resumeText: "resume text" } });
+    await waitFor(() => !!lastOf("resume:extracted"), "resume:extracted");
+    expect(lastOf("resume:extracted")!.payload).toEqual({ fields: EXTRACTED, error: null });
+  });
+
+  it("replies with an error when the model doesn't return valid JSON", async () => {
+    llmState.chunks = ["Sorry, I can't do that."];
+    dispatch({ type: "resume:extract", payload: { resumeText: "resume text" } });
+    await waitFor(() => !!lastOf("resume:extracted"), "resume:extracted");
     expect(lastOf("resume:extracted")!.payload).toMatchObject({ fields: null });
-    expect(lastOf("resume:extracted")!.payload.error).toMatch(/isn't available/i);
+    expect(lastOf("resume:extracted")!.payload.error).toMatch(/couldn't extract/i);
+  });
+
+  it("requires a non-empty resumeText", async () => {
+    dispatch({ type: "resume:extract", payload: { resumeText: "" } });
+    await waitFor(() => !!lastOf("resume:extracted"), "resume:extracted");
+    expect(lastOf("resume:extracted")!.payload).toMatchObject({ fields: null });
+    expect(lastOf("resume:extracted")!.payload.error).toMatch(/no resume text/i);
+    expect(llmState.calls).toHaveLength(0);
+  });
+
+  it("requires a BYOK API key for a non-Ollama provider", async () => {
+    await localStore.set({ settings: { provider: "anthropic", apiKey: "" } });
+    dispatch({ type: "resume:extract", payload: { resumeText: "resume text" } });
+    await waitFor(() => !!lastOf("resume:extracted"), "resume:extracted");
+    expect(lastOf("resume:extracted")!.payload).toMatchObject({ fields: null });
+    expect(lastOf("resume:extracted")!.payload.error).toMatch(/api key/i);
+    expect(llmState.calls).toHaveLength(0);
   });
 });
