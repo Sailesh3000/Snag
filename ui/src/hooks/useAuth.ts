@@ -1,11 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { isInIframe, postToBackground } from "../lib/channel";
 
-// Sign-in / subscription state for the sidebar (plan B4). The UI never
-// touches tokens: it asks the background for a reduced session view
-// (sub/email only) plus the live subscription status from /api/me, and the
-// background pushes updates (auth:updated) on sign-in, sign-out, checkout
-// completion, and the 30s alarm re-poll.
+// Sign-in state for the sidebar. Free product, no billing: the UI never
+// touches tokens, it asks the background for a reduced session view
+// (sub/email only), and the background pushes updates (auth:updated) on
+// sign-in, sign-out, and the 30s alarm re-poll.
 
 export interface PublicSession {
   sub: string;
@@ -13,37 +12,27 @@ export interface PublicSession {
   expiresAt: number;
 }
 
-export interface SubscriptionInfo {
-  status: string; // "active" | "past_due" | "cancelled" | "none"
-  currentPeriodEnd: string | null;
-}
-
 export interface UseAuthReturn {
   /** True once the first auth:status / auth:updated reply has landed. */
   ready: boolean;
   session: PublicSession | null;
-  subscription: SubscriptionInfo | null;
   /** Last sign-in error, if any (e.g. "sign-in failed: ..."). */
   error: string | null;
   signedIn: boolean;
-  subscriptionActive: boolean;
   signIn: () => void;
   signOut: () => void;
-  checkout: () => void;
   /** Re-poll auth:status (used by the "check again" affordances). */
   refresh: () => void;
 }
 
 interface AuthPayload {
   session?: PublicSession | null;
-  subscription?: SubscriptionInfo | null;
   error?: string;
 }
 
 export function useAuth(): UseAuthReturn {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState<PublicSession | null>(null);
-  const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,7 +48,6 @@ export function useAuth(): UseAuthReturn {
       if (msg.type !== "auth:status" && msg.type !== "auth:updated") return;
       const p = msg.payload || {};
       setSession(p.session ?? null);
-      setSubscription(p.subscription ?? null);
       setError(p.error ?? null);
       setReady(true);
     }
@@ -73,7 +61,6 @@ export function useAuth(): UseAuthReturn {
   }, []);
 
   const signOut = useCallback(() => postToBackground({ type: "auth:signOut" }), []);
-  const checkout = useCallback(() => postToBackground({ type: "auth:checkout" }), []);
 
   const refresh = useCallback(() => {
     setReady(false);
@@ -83,13 +70,10 @@ export function useAuth(): UseAuthReturn {
   return {
     ready,
     session,
-    subscription,
     error,
     signedIn: !!session,
-    subscriptionActive: subscription?.status === "active",
     signIn,
     signOut,
-    checkout,
     refresh,
   };
 }

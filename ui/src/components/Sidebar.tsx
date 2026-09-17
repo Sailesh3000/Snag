@@ -11,8 +11,7 @@ import ResumeImport from "./ResumeImport";
 import MemoryManager from "./MemoryManager";
 import FeedbackModal from "./FeedbackModal";
 import StatusBadge, { type AuthBadgeStatus } from "./StatusBadge";
-import SubscriptionGate from "./SubscriptionGate";
-import PlanPanel from "./PlanPanel";
+import SignInGate from "./SignInGate";
 import Section from "./Section";
 
 interface StatusPayload {
@@ -55,18 +54,9 @@ export default function Sidebar() {
   const [fieldAnswers, setFieldAnswers] = useState<Map<string, FieldAnswerState>>(new Map());
   const [showFeedback, setShowFeedback] = useState(false);
   const [showMemoryManager, setShowMemoryManager] = useState(false);
-  const [showPlanPanel, setShowPlanPanel] = useState(false);
   const timeoutHandles = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  const badgeStatus: AuthBadgeStatus = !auth.ready
-    ? "checking"
-    : !auth.signedIn
-      ? "signedOut"
-      : auth.subscription === null
-        ? "checking"
-        : auth.subscriptionActive
-          ? "active"
-          : "inactive";
+  const badgeStatus: AuthBadgeStatus = !auth.ready ? "checking" : auth.signedIn ? "signedIn" : "signedOut";
 
   const statusPayload = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -393,18 +383,6 @@ export default function Sidebar() {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            {auth.subscriptionActive && (
-              <button
-                onClick={() => setShowPlanPanel((v) => !v)}
-                className="flex items-center gap-1 px-1.5 py-1 rounded-full bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/20 transition-colors"
-                title="Plan & billing"
-              >
-                <svg className="w-2.5 h-2.5 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8 2 9.2h7.6z" />
-                </svg>
-                <span className="text-[9px] font-bold text-amber-400">Pro</span>
-              </button>
-            )}
             <button
               onClick={() => setShowMemoryManager(true)}
               className="w-5 h-5 flex items-center justify-center rounded-md hover:bg-white/[0.06] text-gray-500 hover:text-gray-300 transition-colors"
@@ -430,22 +408,7 @@ export default function Sidebar() {
         <div className="glow-line mt-3" />
       </header>
 
-      <AnimatePresence>
-        {showPlanPanel && auth.subscription && (
-          <div className="px-3 pt-2">
-            <PlanPanel
-              subscription={auth.subscription}
-              onSignOut={() => {
-                setShowPlanPanel(false);
-                auth.signOut();
-              }}
-              onClose={() => setShowPlanPanel(false)}
-            />
-          </div>
-        )}
-      </AnimatePresence>
-
-      {auth.subscriptionActive ? (
+      {auth.signedIn ? (
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
         <motion.div
           initial={{ opacity: 0, y: 4 }}
@@ -545,7 +508,6 @@ export default function Sidebar() {
                 onSkip={handleSkip}
                 onFillManually={handleFillManually}
                 onRegenerate={handleRegenerate}
-                onCheckout={auth.checkout}
                 onSignIn={auth.signIn}
               />
             ) : (
@@ -560,13 +522,13 @@ export default function Sidebar() {
         </Section>
       </div>
       ) : (
-        <SubscriptionGate auth={auth} />
+        <SignInGate auth={auth} />
       )}
 
       <footer className="relative px-4 py-2 glass-strong">
         <div className="glow-line mb-2" />
         <div className="flex items-center justify-between">
-          <span className="text-[9px] text-gray-600 font-mono">v0.2.0</span>
+          <span className="text-[9px] text-gray-600 font-mono">v0.5.0</span>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowFeedback(true)}
@@ -582,21 +544,15 @@ export default function Sidebar() {
             <div className="flex items-center gap-1">
               <div
                 className={`w-1 h-1 rounded-full ${
-                  badgeStatus === "active"
-                    ? "bg-emerald-400/60"
-                    : badgeStatus === "inactive"
-                      ? "bg-amber-400/60"
-                      : "bg-gray-600/70"
+                  badgeStatus === "signedIn" ? "bg-emerald-400/60" : "bg-gray-600/70"
                 }`}
               />
               <span className="text-[9px] text-gray-600">
-                {badgeStatus === "active"
-                  ? "Pro active"
-                  : badgeStatus === "inactive"
-                    ? "No active plan"
-                    : badgeStatus === "signedOut"
-                      ? "Not signed in"
-                      : "Checking..."}
+                {badgeStatus === "signedIn"
+                  ? "Signed in"
+                  : badgeStatus === "signedOut"
+                    ? "Not signed in"
+                    : "Checking..."}
               </span>
             </div>
           </div>

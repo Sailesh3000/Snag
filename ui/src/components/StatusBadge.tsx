@@ -1,25 +1,19 @@
 import { motion } from "framer-motion";
 
-// Connection-semantic badge replaced by auth/subscription semantics (plan B3):
-// the "channel" is the extension itself, so the badge now tells the user
-// whether they're signed in and whether a subscription is active.
-export type AuthBadgeStatus = "active" | "inactive" | "signedOut" | "checking";
+// Connection-semantic badge replaced by auth semantics: the "channel" is
+// the extension itself, so the badge now tells the user whether they're
+// signed in. Free product, no billing — no plan/subscription state at all.
+export type AuthBadgeStatus = "signedIn" | "signedOut" | "checking";
 
 interface StatusBadgeProps {
   status: AuthBadgeStatus;
 }
 
 const STATUS_CONFIG = {
-  active: {
-    label: "Pro",
+  signedIn: {
+    label: "Signed in",
     dot: "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]",
     text: "text-emerald-400",
-    animate: false,
-  },
-  inactive: {
-    label: "No plan",
-    dot: "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)]",
-    text: "text-amber-400",
     animate: false,
   },
   signedOut: {

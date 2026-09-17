@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 // server-side. The published build has no such endpoint, so feedback is
 // composed as a pre-filled email in the user's own mail client.
 const FEEDBACK_EMAIL = "chandrasailesh30@gmail.com";
-const EXTENSION_VERSION = "0.4.0";
+const EXTENSION_VERSION = "0.5.0";
 
 interface FeedbackModalProps {
   onClose: () => void;
